@@ -45,6 +45,18 @@ function contextLabel() {
 }
 function addLog(msg) { S.log.push({ when: contextLabel(), msg }); }
 
+// Confirmation et notifications intégrées (les popups natives sont bloquées
+// dans certains contextes : PWA, iframes sandboxées…)
+let confirmBox = null; // {text, action, arg}
+let toastMsg = null, toastHandle = null;
+function askConfirm(text, action, arg) { confirmBox = { text, action, arg }; render(); }
+function toast(msg) {
+  toastMsg = msg;
+  clearTimeout(toastHandle);
+  toastHandle = setTimeout(() => { toastMsg = null; const el = document.getElementById('toast'); if (el) el.remove(); }, 2600);
+  render();
+}
+
 const CAUSE_LABEL = {
   loups: 'dévoré(e) par les Loups-Garous',
   gml: 'dévoré(e) par le Grand Méchant Loup',
@@ -353,8 +365,11 @@ const actions = {
     S = defaultState(); S.settings = keep; S.screen = 'players'; update();
   },
   resumeGame() { S.screen = 'game'; update(); },
-  goHome() { if (confirm('Retourner à l’accueil ? La partie reste sauvegardée.')) { S.screen = 'home'; update(); } },
-  resetAll() { if (confirm('Abandonner la partie en cours et tout effacer ?')) { const keep = S.settings; S = defaultState(); S.settings = keep; update(); } },
+  goHome() { S.screen = 'home'; update(); },
+  resetAll() { askConfirm('Abandonner la partie en cours et tout effacer ?', 'doResetAll'); },
+  doResetAll() { const keep = S.settings; S = defaultState(); S.settings = keep; update(); },
+  confirmYes() { const c = confirmBox; confirmBox = null; if (c && actions[c.action]) actions[c.action](c.arg); else render(); },
+  confirmNo() { confirmBox = null; render(); },
   setTab(tab) { S.tab = tab; update(); },
 
   // ——— Joueurs ———
@@ -377,7 +392,7 @@ const actions = {
     update();
   },
   toRoles() {
-    if (S.players.length < 4) { alert('Il faut au moins 4 joueurs.'); return; }
+    if (S.players.length < 4) { toast('Il faut au moins 4 joueurs.'); return; }
     if (!Object.keys(S.roleCounts).length) S.roleCounts = suggestComposition(S.players.length);
     S.screen = 'roles'; update();
   },
@@ -403,7 +418,7 @@ const actions = {
   backToPlayers() { S.screen = 'players'; update(); },
   toDeal() {
     const total = Object.values(S.roleCounts).reduce((a, b) => a + b, 0);
-    if (total !== S.players.length) { alert(`Il faut exactement ${S.players.length} cartes (actuellement ${total}).`); return; }
+    if (total !== S.players.length) { toast(`Il faut exactement ${S.players.length} cartes (actuellement ${total}).`); return; }
     dealCards();
     S.screen = 'deal'; S.dealMode = null; S.dealDone = []; S.dealShow = null; S.dealRevealed = false;
     update();
@@ -425,7 +440,7 @@ const actions = {
   },
   backToRoles() { S.screen = 'roles'; update(); },
   startGame() {
-    if (S.players.some(p => !p.roleId)) { alert('Tous les joueurs doivent avoir une carte.'); return; }
+    if (S.players.some(p => !p.roleId)) { toast('Tous les joueurs doivent avoir une carte.'); return; }
     // Groupes du Sectaire : info au lancement
     S.players.forEach(p => { p.alive = true; });
     S.phase = 'night'; S.nightNumber = 1; S.dayCount = 0;
@@ -460,7 +475,7 @@ const actions = {
     const step = curStep(); if (!step) return;
     // Validation / effets de l'étape courante
     if (step.ui === 'pickMulti' && step.key === 'cupidon') {
-      if (S.night.temp.length !== 2) { alert('Sélectionnez 2 amoureux (ou passez l’étape).'); return; }
+      if (S.night.temp.length !== 2) { toast('Sélectionnez 2 amoureux (ou passez l’étape).'); return; }
       S.night.temp.forEach(id => { const p = byId(id); if (p) p.lover = true; });
       addLog(`💘 Amoureux : ${S.night.temp.map(id => byId(id)?.name).join(' ❤️ ')}`);
       S.night.temp = [];
@@ -507,7 +522,7 @@ const actions = {
   infectChoice(arg) {
     if (arg === 'yes') {
       const victim = S.night.actions.loups;
-      if (victim == null) { alert('Aucune victime des loups à infecter.'); return; }
+      if (victim == null) { toast('Aucune victime des loups à infecter.'); return; }
       S.flags.infectUsed = true;
       S.night.actions.infectTarget = victim;
       addLog(`🧟 L'Infect Père des Loups infecte ${byId(victim)?.name}`);
@@ -668,8 +683,8 @@ const actions = {
   endGame() { const keep = S.settings; S = defaultState(); S.settings = keep; update(); },
 
   // ——— Tableau des joueurs (admin) ———
-  adminKill(id) {
-    if (!confirm(`Éliminer ${byId(+id)?.name} manuellement ?`)) return;
+  adminKill(id) { askConfirm(`Éliminer ${byId(+id)?.name} manuellement ?`, 'doAdminKill', id); },
+  doAdminKill(id) {
     S.announce.queue = S.announce.queue || [];
     killPlayer(+id, 'manuel');
     checkVictory();
@@ -733,6 +748,17 @@ function render() {
     case 'game': html = renderGame(); break;
   }
   if (S.showSettings) html += renderSettings();
+  if (confirmBox) html += `
+    <div class="modal-backdrop">
+      <div class="modal center">
+        <p style="font-size:1.05rem">${esc(confirmBox.text)}</p>
+        <div class="grid2" style="margin-top:14px">
+          <button class="btn-big" data-action="confirmNo" style="margin-top:0">Annuler</button>
+          <button class="btn-big btn-danger" data-action="confirmYes" style="margin-top:0">Confirmer</button>
+        </div>
+      </div>
+    </div>`;
+  if (toastMsg) html += `<div class="toast" id="toast">${esc(toastMsg)}</div>`;
   $app.innerHTML = html;
   bindActions();
 }
