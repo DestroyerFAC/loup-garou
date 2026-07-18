@@ -1,0 +1,255 @@
+/* ——— Loup-Garou : Assistant du Narrateur ——— */
+:root {
+  --bg: #12101f;
+  --bg2: #1a1730;
+  --card: #211d3a;
+  --card2: #2a2549;
+  --border: #38325e;
+  --text: #ece9f7;
+  --muted: #9a93bd;
+  --accent: #f5b942;
+  --accent2: #c98df5;
+  --danger: #f0596b;
+  --ok: #4fd08c;
+  --wolf: #f0596b;
+  --village: #5aa9f7;
+  --solo: #c98df5;
+  --radius: 14px;
+  --shadow: 0 4px 18px rgba(0, 0, 0, .35);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html { font-size: 16px; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(1200px 500px at 80% -10%, #2c2452 0%, transparent 60%),
+    radial-gradient(900px 400px at -10% 20%, #241c45 0%, transparent 55%),
+    var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.45;
+}
+
+#app { max-width: 640px; margin: 0 auto; padding: 16px 14px 90px; }
+
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.2rem; margin-bottom: .5rem; }
+h3 { font-size: 1rem; }
+p { margin: .3rem 0; }
+.muted { color: var(--muted); font-size: .92rem; }
+.small { font-size: .85rem; }
+.center { text-align: center; }
+.spacer { height: 12px; }
+
+/* ——— Boutons ——— */
+button {
+  font: inherit; color: inherit; border: 1px solid var(--border);
+  background: var(--card2); border-radius: var(--radius);
+  padding: 12px 16px; cursor: pointer; transition: filter .12s, transform .05s;
+}
+button:active { transform: scale(.98); }
+button:hover { filter: brightness(1.12); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-primary {
+  background: linear-gradient(135deg, #f5b942, #e9962e);
+  color: #241a05; font-weight: 700; border: none;
+  box-shadow: 0 3px 14px rgba(245, 185, 66, .25);
+}
+.btn-danger { background: linear-gradient(135deg, #f0596b, #ce3550); color: #fff; font-weight: 600; border: none; }
+.btn-ok { background: linear-gradient(135deg, #4fd08c, #2fa96a); color: #06281a; font-weight: 700; border: none; }
+.btn-ghost { background: transparent; }
+.btn-big { width: 100%; padding: 16px; font-size: 1.05rem; margin-top: 10px; }
+.btn-sm { padding: 7px 12px; border-radius: 10px; font-size: .88rem; }
+.btn-round { width: 40px; height: 40px; border-radius: 50%; padding: 0; font-size: 1.2rem; font-weight: 700; }
+
+.row { display: flex; gap: 10px; align-items: center; }
+.row-between { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ——— Cartes / panneaux ——— */
+.panel {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; margin: 12px 0;
+  box-shadow: var(--shadow);
+}
+.panel-accent { border-color: rgba(245, 185, 66, .55); }
+.panel-danger { border-color: rgba(240, 89, 107, .6); }
+
+/* ——— En-tête ——— */
+.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 2px 14px;
+}
+.topbar .title { font-weight: 800; font-size: 1.1rem; letter-spacing: .3px; }
+.badge {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: .78rem; font-weight: 700; border: 1px solid var(--border);
+  background: var(--card2);
+}
+.badge-night { background: #2b2853; color: #cfc6ff; border-color: #4b4390; }
+.badge-day { background: #4a3c14; color: #ffe6a3; border-color: #8a6f1f; }
+.badge-wolf { color: #ffb6c0; border-color: #a04, ; }
+.badge-village { color: #a9d4ff; }
+.badge-solo { color: #e2c2ff; }
+.badge-dead { color: #888; text-decoration: line-through; }
+
+/* ——— Saisie ——— */
+input[type=text], input[type=number], select {
+  font: inherit; color: inherit;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 11px 12px; width: 100%;
+}
+input:focus, select:focus { outline: 2px solid rgba(245, 185, 66, .5); }
+
+/* ——— Liste de joueurs (setup) ——— */
+.player-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px; margin: 6px 0;
+}
+.player-row .num { color: var(--muted); font-size: .82rem; width: 22px; text-align: right; }
+.player-row .name { flex: 1; font-weight: 600; }
+
+/* ——— Sélection des rôles ——— */
+.role-card {
+  display: flex; gap: 10px; align-items: center;
+  background: var(--card2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; margin: 7px 0;
+}
+.role-card.selected { border-color: var(--accent); background: #2e2850; }
+.role-card .icon { font-size: 1.6rem; width: 38px; text-align: center; }
+.role-card .info { flex: 1; min-width: 0; }
+.role-card .rname { font-weight: 700; }
+.role-card .rshort { color: var(--muted); font-size: .82rem; }
+.role-card .count { font-weight: 800; font-size: 1.1rem; min-width: 20px; text-align: center; }
+.camp-tag { font-size: .7rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-left: 6px; vertical-align: 2px; }
+.camp-village { background: rgba(90, 169, 247, .18); color: var(--village); }
+.camp-loups { background: rgba(240, 89, 107, .18); color: var(--wolf); }
+.camp-solo { background: rgba(201, 141, 245, .18); color: var(--solo); }
+
+.counter-bar {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 14px; margin-bottom: 10px;
+  display: flex; justify-content: space-between; align-items: center;
+  box-shadow: var(--shadow);
+}
+.counter-bar .ok { color: var(--ok); font-weight: 800; }
+.counter-bar .ko { color: var(--danger); font-weight: 800; }
+
+/* ——— Distribution ——— */
+.deal-name-btn {
+  width: 100%; text-align: left; margin: 6px 0; font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.deal-done { opacity: .5; }
+.big-card {
+  text-align: center; padding: 30px 16px; margin: 14px 0;
+  background: linear-gradient(160deg, #2e2850, #211d3a);
+  border: 2px solid var(--accent); border-radius: 20px;
+}
+.big-card .icon { font-size: 4rem; }
+.big-card .rname { font-size: 1.5rem; font-weight: 800; margin-top: 6px; }
+
+/* ——— Nuit : étapes ——— */
+.step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.step-header .icon { font-size: 2.4rem; }
+.step-progress { color: var(--muted); font-size: .82rem; margin-bottom: 8px; }
+.narrator-say {
+  background: rgba(245, 185, 66, .1); border-left: 3px solid var(--accent);
+  padding: 10px 12px; border-radius: 0 10px 10px 0; margin: 10px 0;
+  font-style: italic;
+}
+.pick-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.pick-btn { padding: 10px 14px; border-radius: 999px; font-weight: 600; }
+.pick-btn.picked { background: var(--accent); color: #241a05; border-color: var(--accent); }
+.pick-btn.is-dead { opacity: .35; text-decoration: line-through; }
+
+/* ——— Tableau des joueurs ——— */
+.pboard-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 9px 12px; margin: 6px 0;
+}
+.pboard-row.dead { opacity: .55; background: #1c1930; }
+.pboard-row .picon { font-size: 1.4rem; }
+.pboard-row .pinfo { flex: 1; min-width: 0; }
+.pboard-row .pname { font-weight: 700; }
+.pboard-row.dead .pname { text-decoration: line-through; }
+.pboard-row .prole { font-size: .82rem; color: var(--muted); }
+.status-icons { font-size: .95rem; letter-spacing: 2px; }
+
+/* ——— Minuteur ——— */
+.timer-display {
+  font-size: 4rem; font-weight: 800; text-align: center;
+  font-variant-numeric: tabular-nums; letter-spacing: 2px; margin: 6px 0;
+}
+.timer-display.warning { color: var(--danger); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .5; } }
+
+/* ——— Journal ——— */
+.log-item { padding: 7px 0; border-bottom: 1px dashed var(--border); font-size: .9rem; }
+.log-item .when { color: var(--muted); font-size: .78rem; margin-right: 6px; }
+
+/* ——— Onglets ——— */
+.tabs {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+  display: flex; justify-content: center; gap: 6px;
+  background: rgba(18, 16, 31, .92); backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border); padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+}
+.tab-btn { flex: 1; max-width: 150px; text-align: center; border-radius: 12px; padding: 9px 4px; font-size: .82rem; border: none; background: transparent; }
+.tab-btn.active { background: var(--card2); font-weight: 700; color: var(--accent); }
+.tab-btn .ticon { display: block; font-size: 1.25rem; }
+
+/* ——— Morts / annonces ——— */
+.death-item {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(240, 89, 107, .1); border: 1px solid rgba(240, 89, 107, .4);
+  border-radius: 12px; padding: 10px 12px; margin: 7px 0;
+}
+.no-death {
+  background: rgba(79, 208, 140, .1); border: 1px solid rgba(79, 208, 140, .4);
+  border-radius: 12px; padding: 12px; text-align: center; font-weight: 600;
+}
+
+/* ——— Victoire ——— */
+.victory {
+  text-align: center; padding: 30px 16px;
+  background: linear-gradient(160deg, #3b2e10, #211d3a);
+  border: 2px solid var(--accent); border-radius: 20px; margin: 14px 0;
+}
+.victory .vicon { font-size: 4rem; }
+.victory h2 { font-size: 1.6rem; margin: 8px 0; }
+
+/* ——— Modale ——— */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, .6); backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center; padding: 18px;
+}
+.modal {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 16px; padding: 18px; max-width: 480px; width: 100%;
+  max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow);
+}
+
+details { margin: 8px 0; }
+summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+
+.order-item {
+  display: flex; gap: 10px; align-items: center; padding: 8px 4px;
+  border-bottom: 1px dashed var(--border);
+}
+.order-item .onum {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  background: var(--card2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .8rem; font-weight: 700;
+}
