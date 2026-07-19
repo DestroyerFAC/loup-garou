@@ -343,6 +343,18 @@ input::placeholder { color: #6e6596; }
   padding: 12px 14px 12px 16px; border-radius: 0 12px 12px 0; margin: 12px 0;
   font-style: italic; font-size: 1.02rem;
 }
+.role-brief {
+  background: var(--bg2); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 11px 13px; margin: 10px 0;
+  font-size: .88rem;
+}
+.role-brief .rb-head {
+  font-family: var(--font-display); font-weight: 700; letter-spacing: .03em;
+  margin-bottom: 4px;
+}
+.role-brief p { margin: .25rem 0; color: var(--muted); }
+.role-brief p b { color: var(--text); font-weight: 600; }
+
 .pick-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .pick-btn {
   padding: 10px 15px; border-radius: 999px; font-weight: 600;

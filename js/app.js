@@ -170,11 +170,11 @@ function buildNight() {
     say: 'Chien-Loup, réveille-toi. Choisis ton camp : Villageois ou Loup-Garou ?',
     help: 'S’il choisit les loups, il se réveillera chaque nuit avec eux.' });
 
-  if (n === 1 && roleInPlay('trois_freres')) add({ key: 'freres', icon: '👨‍👨‍👦', title: 'Les Trois Frères', ui: 'info',
+  if (n === 1 && roleInPlay('trois_freres')) add({ key: 'freres', icon: '👨‍👨‍👦', title: 'Les Trois Frères', ui: 'info', briefRoleId: 'trois_freres',
     say: 'Les Trois Frères, réveillez-vous et reconnaissez-vous.',
     help: 'Vous pourrez les réveiller de temps en temps (nuits suivantes) pour qu’ils se concertent en silence.' });
 
-  if (n === 1 && roleInPlay('deux_soeurs')) add({ key: 'soeurs', icon: '👭', title: 'Les Deux Sœurs', ui: 'info',
+  if (n === 1 && roleInPlay('deux_soeurs')) add({ key: 'soeurs', icon: '👭', title: 'Les Deux Sœurs', ui: 'info', briefRoleId: 'deux_soeurs',
     say: 'Les Deux Sœurs, réveillez-vous et reconnaissez-vous.',
     help: 'Vous pourrez les réveiller de temps en temps (nuits suivantes) pour qu’elles se concertent en silence.' });
 
@@ -191,7 +191,7 @@ function buildNight() {
     help: 'Il désigne un joueur : vous répondez OUI si ce joueur ou l’un de ses deux voisins vivants est un Loup-Garou. Si la réponse est NON, il perd son pouvoir.' });
 
   const wolves = alivePlayers().filter(isWolfSide);
-  if (wolves.length) add({ key: 'loups', icon: '🐺', title: 'Les Loups-Garous', ui: 'pick', optional: true,
+  if (wolves.length) add({ key: 'loups', icon: '🐺', title: 'Les Loups-Garous', ui: 'pick', optional: true, briefRoleId: 'loup',
     say: 'Loups-Garous, réveillez-vous et désignez votre victime.',
     help: `Loups à appeler : ${wolves.map(p => p.name).join(', ')}.` +
       (roleAlive('petite_fille') ? ' 👧 La Petite Fille peut espionner discrètement.' : '') });
@@ -1213,6 +1213,7 @@ function renderNight() {
         </div>
       </div>
       <div class="narrator-say">🗣️ « ${step.say} »</div>
+      ${renderRoleBrief(step)}
       ${step.help ? `<p class="muted small">💡 ${step.help}</p>` : ''}
       ${body}
       <div class="row" style="margin-top:14px">
@@ -1224,6 +1225,19 @@ function renderNight() {
       </div>
     </div>
     ${renderNightOrderPreview()}`;
+}
+
+// Encart « objectif & pouvoir » du rôle appelé, pour que le narrateur
+// puisse expliquer le personnage au joueur en un coup d'œil.
+function renderRoleBrief(step) {
+  const role = roleById[step.briefRoleId || step.roleId];
+  if (!role) return '';
+  return `
+    <div class="role-brief">
+      <div class="rb-head">${role.icon} ${role.name} <span class="camp-tag camp-${role.camp}">${CAMP_LABEL[role.camp]}</span></div>
+      <p><b>🎯 Objectif :</b> ${roleGoal(role)}</p>
+      <p><b>⚙️ Pouvoir :</b> ${role.desc}</p>
+    </div>`;
 }
 
 function renderNightRecap() {

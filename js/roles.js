@@ -21,6 +21,7 @@ const ROLES = [
   },
   {
     id: 'loup_blanc', name: 'Loup Blanc', icon: '🌕', camp: 'solo', max: 1, ext: 'Personnages',
+    goal: 'Être le DERNIER survivant : il trahit même les loups.',
     short: 'Loup solitaire : doit rester le dernier survivant.',
     desc: "Se réveille avec les loups. Une nuit sur deux, il se réveille ensuite seul et peut dévorer un Loup-Garou. Il gagne s'il est le dernier survivant."
   },
@@ -88,6 +89,7 @@ const ROLES = [
   },
   {
     id: 'joueur_flute', name: 'Joueur de Flûte', icon: '🪈', camp: 'solo', max: 1, ext: 'Nouvelle Lune',
+    goal: 'Charmer tous les survivants pour gagner seul.',
     short: 'Charme 2 joueurs par nuit. Gagne si tous sont charmés.',
     desc: "Chaque nuit, il charme 2 joueurs (le narrateur les touche, ils se réveillent et se reconnaissent). Il gagne seul si tous les survivants sont charmés."
   },
@@ -103,11 +105,13 @@ const ROLES = [
   },
   {
     id: 'chien_loup', name: 'Chien-Loup', icon: '🐕', camp: 'village', max: 1, ext: 'Personnages',
+    goal: 'Suivant son choix de la première nuit : Village ou Loups.',
     short: 'Nuit 1 : choisit son camp, Village ou Loups.',
     desc: "La première nuit, il choisit secrètement son camp : simple villageois, ou Loup-Garou (il se réveillera alors chaque nuit avec eux)."
   },
   {
     id: 'enfant_sauvage', name: 'Enfant Sauvage', icon: '🐒', camp: 'village', max: 1, ext: 'Personnages',
+    goal: 'Village tant que son modèle est vivant ; Loups dès qu\'il meurt.',
     short: 'Choisit un modèle. Si le modèle meurt, il devient loup.',
     desc: "La première nuit, il choisit un joueur modèle. Tant que le modèle vit, il est villageois. Si le modèle meurt, il devient Loup-Garou et se réveille avec eux."
   },
@@ -143,6 +147,7 @@ const ROLES = [
   },
   {
     id: 'abominable_sectaire', name: 'Abominable Sectaire', icon: '🕯️', camp: 'solo', max: 1, ext: 'Personnages',
+    goal: 'Être le seul groupe survivant : éliminer toute l\'autre moitié du village.',
     short: 'Gagne si l’autre moitié du village est éliminée.',
     desc: "Le narrateur divise le village en 2 groupes visibles (ex. : d'un côté / de l'autre de la table). Le Sectaire gagne seul si tous les joueurs de l'autre groupe sont éliminés."
   },
@@ -153,12 +158,21 @@ const ROLES = [
   },
   {
     id: 'ange', name: 'Ange', icon: '👼', camp: 'solo', max: 1, ext: 'Personnages',
+    goal: 'Se faire éliminer au tout premier tour pour gagner seul.',
     short: 'Gagne s’il est éliminé au tout premier tour.',
     desc: "S'il est éliminé au premier vote du village (ou dévoré la première nuit), il gagne la partie seul. Sinon, il redevient simple villageois."
   },
 ];
 
 const roleById = Object.fromEntries(ROLES.map(r => [r.id, r]));
+
+// Objectif de victoire : celui du camp, sauf objectif propre au rôle.
+const CAMP_GOAL = {
+  village: 'Démasquer et éliminer tous les Loups-Garous.',
+  loups: 'Dévorer les villageois jusqu\'à contrôler le village, sans se faire démasquer.',
+  solo: 'Gagner seul, contre tous les autres.',
+};
+function roleGoal(role) { return role.goal || CAMP_GOAL[role.camp] || ''; }
 
 // Camps « effectifs » gérés dynamiquement par joueur (chien-loup, enfant sauvage, infection).
 const CAMP_LABEL = {
