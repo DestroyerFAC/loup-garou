@@ -116,6 +116,11 @@ function timerPaint(key) {
   el.textContent = fmtTime(t.remaining);
   el.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
   if (btn) btn.textContent = t.running ? '⏸ Pause' : (t.remaining === 0 ? '🔁 Fini' : '▶️ Lancer');
+  const bar = document.getElementById(`timerbar-${key}`);
+  if (bar) {
+    bar.style.width = `${t.total ? Math.round((t.remaining / t.total) * 100) : 0}%`;
+    bar.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
+  }
 }
 function fmtTime(s) { return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 function timerHTML(key, secs, label) {
@@ -124,6 +129,7 @@ function timerHTML(key, secs, label) {
     <div class="center">
       <div class="muted small">${esc(label)}</div>
       <div class="timer-display ${t.remaining <= 10 && t.remaining > 0 ? 'warning' : ''}" id="timer-${key}">${fmtTime(t.remaining)}</div>
+      <div class="timer-bar"><i id="timerbar-${key}" style="width:${t.total ? Math.round((t.remaining / t.total) * 100) : 0}%" class="${t.remaining <= 10 && t.remaining > 0 ? 'warning' : ''}"></i></div>
       <div class="row" style="justify-content:center">
         <button class="btn-primary" id="timerbtn-${key}" data-action="timerToggle" data-arg="${key}">${t.running ? '⏸ Pause' : '▶️ Lancer'}</button>
         <button class="btn-sm" data-action="timerAdd" data-arg="${key}">+30 s</button>
@@ -739,6 +745,8 @@ function curStep() { return S.night?.steps[S.night.idx]; }
 
 // ————————————————————————— Rendu —————————————————————————
 function render() {
+  // Ambiance visuelle selon la phase (ciel étoilé la nuit, ambre le jour)
+  document.body.className = S.screen === 'game' ? `phase-${S.phase}` : 'phase-night';
   let html = '';
   switch (S.screen) {
     case 'home': html = renderHome(); break;
@@ -779,11 +787,14 @@ function bindActions() {
 function renderHome() {
   const hasGame = S.players.length > 0 && S.players.some(p => p.roleId);
   return `
-    <div class="center" style="padding-top:8vh">
-      <div style="font-size:5rem">🐺</div>
-      <h1>Loup-Garou</h1>
-      <p class="muted">Assistant du narrateur — Thiercelieux, édition complète</p>
-      <div class="spacer"></div>
+    <div class="center" style="padding-top:6vh">
+      <div class="hero">
+        <div class="moon"></div>
+        <div class="wolf">🐺</div>
+      </div>
+      <h1 class="home-title">Loup-Garou</h1>
+      <p class="home-sub">Assistant du narrateur · Thiercelieux</p>
+      <div class="home-rule"></div>
       ${hasGame ? `<button class="btn-primary btn-big" data-action="resumeGame">▶️ Reprendre la partie</button>` : ''}
       <button class="btn-big ${hasGame ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
       <div class="spacer"></div>
@@ -843,7 +854,7 @@ function renderRolesSetup() {
       ${roles.map(r => {
         const c = S.roleCounts[r.id] || 0;
         return `
-        <div class="role-card ${c ? 'selected' : ''}">
+        <div class="role-card is-${r.camp} ${c ? 'selected' : ''}">
           <span class="icon">${r.icon}</span>
           <div class="info">
             <div class="rname">${r.name}${r.pair ? ` <span class="muted small">(×${r.pair})</span>` : ''}</div>
@@ -1125,6 +1136,7 @@ function renderNight() {
   const isLast = step.ui === 'fin';
   return `
     <div class="panel panel-accent">
+      <div class="step-bar"><i style="width:${Math.round(((S.night.idx + 1) / S.night.steps.length) * 100)}%"></i></div>
       <div class="step-progress">Étape ${S.night.idx + 1} / ${S.night.steps.length}</div>
       <div class="step-header">
         <span class="icon">${icon}</span>
@@ -1425,7 +1437,7 @@ function renderHelp() {
     <details class="panel">
       <summary>🎴 Tous les personnages</summary>
       ${ROLES.map(r => `
-        <div class="role-card">
+        <div class="role-card is-${r.camp}">
           <span class="icon">${r.icon}</span>
           <div class="info">
             <div class="rname">${r.name} <span class="camp-tag camp-${r.camp}">${CAMP_LABEL[r.camp]}</span> <span class="muted small">· ${r.ext}</span></div>
