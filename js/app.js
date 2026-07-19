@@ -2,7 +2,42 @@
 // Dépend de js/roles.js (chargé avant ce script).
 
 const STORAGE_KEY = 'loupgarou_state_v1';
+const ROSTER_KEY = 'loupgarou_roster_v1';   // noms des joueurs déjà vus
+const LAST_KEY = 'loupgarou_last_v1';       // dernière table (joueurs + composition)
 const $app = document.getElementById('app');
+
+// ——— Mémoire des joueurs (persiste d'une partie à l'autre) ———
+function loadRoster() {
+  try { return JSON.parse(localStorage.getItem(ROSTER_KEY)) || []; } catch (e) { return []; }
+}
+function rememberPlayers(names) {
+  try {
+    const roster = loadRoster().filter(n => !names.includes(n));
+    localStorage.setItem(ROSTER_KEY, JSON.stringify([...names, ...roster].slice(0, 40)));
+  } catch (e) { /* stockage indisponible */ }
+}
+function loadLastSetup() {
+  try { return JSON.parse(localStorage.getItem(LAST_KEY)); } catch (e) { return null; }
+}
+function rememberLastSetup() {
+  try {
+    localStorage.setItem(LAST_KEY, JSON.stringify({
+      players: S.players.map(p => p.name),
+      roleCounts: S.roleCounts, styleId: S.styleId, buildingsEnabled: S.buildingsEnabled,
+    }));
+  } catch (e) { /* stockage indisponible */ }
+}
+function makePlayer(name) {
+  return { id: Date.now() + Math.floor(Math.random() * 100000), name, roleId: null, alive: true };
+}
+// Remet les joueurs à neuf (mêmes noms, tout état de partie effacé).
+function resetPlayersForNewGame() {
+  S.players.forEach(p => {
+    p.alive = true; p.roleId = null;
+    p.capitaine = false; p.lover = false; p.charmed = false; p.noVote = false; p.infected = false;
+    delete p.camp; delete p.building;
+  });
+}
 
 // ————————————————————————————— État —————————————————————————————
 const defaultState = () => ({
@@ -385,10 +420,47 @@ const actions = {
     const input = document.getElementById('newPlayerName');
     const name = (input?.value || '').trim();
     if (!name) return;
-    S.players.push({ id: Date.now() + Math.floor(Math.random() * 1000), name, roleId: null, alive: true });
+    S.players.push(makePlayer(name));
     input.value = '';
     update();
     document.getElementById('newPlayerName')?.focus();
+  },
+  addFromRoster(name) {
+    if (S.players.some(p => p.name === name)) return;
+    S.players.push(makePlayer(name));
+    update();
+  },
+  addAllRoster() {
+    loadRoster().forEach(n => { if (!S.players.some(p => p.name === n)) S.players.push(makePlayer(n)); });
+    update();
+  },
+  clearRoster() { askConfirm('Oublier tous les joueurs enregistrés ?', 'doClearRoster'); },
+  doClearRoster() { try { localStorage.removeItem(ROSTER_KEY); } catch (e) { } update(); },
+  removeFromRoster(name) {
+    try { localStorage.setItem(ROSTER_KEY, JSON.stringify(loadRoster().filter(n => n !== name))); } catch (e) { }
+    update();
+  },
+  // Nouvelle partie avec la même table (depuis l'écran de victoire ou l'accueil)
+  nextGame() {
+    resetPlayersForNewGame();
+    S.phase = 'night'; S.nightNumber = 0; S.dayCount = 0;
+    S.night = null; S.day = null; S.announce = { deaths: [], queue: [] };
+    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false;
+    S.screen = 'players';
+    toast('🔁 Même table ! Ajoutez ou retirez des joueurs, puis continuez.');
+    update();
+  },
+  replayLast() {
+    const last = loadLastSetup();
+    if (!last?.players?.length) return;
+    const keep = S.settings;
+    S = defaultState(); S.settings = keep;
+    S.players = last.players.map(makePlayer);
+    S.roleCounts = last.roleCounts || {}; S.styleId = last.styleId || null;
+    S.buildingsEnabled = !!last.buildingsEnabled;
+    S.screen = 'players';
+    toast('🔁 Dernière table rechargée — ajustez si besoin.');
+    update();
   },
   removePlayer(id) { S.players = S.players.filter(p => p.id !== +id); update(); },
   movePlayer(arg) {
@@ -463,6 +535,8 @@ const actions = {
   backToRoles() { S.screen = 'roles'; update(); },
   startGame() {
     if (S.players.some(p => !p.roleId)) { toast('Tous les joueurs doivent avoir une carte.'); return; }
+    rememberPlayers(S.players.map(p => p.name));
+    rememberLastSetup();
     // Groupes du Sectaire : info au lancement
     S.players.forEach(p => { p.alive = true; });
     S.phase = 'night'; S.nightNumber = 1; S.dayCount = 0;
@@ -818,6 +892,7 @@ function bindActions() {
 // ——— Accueil ———
 function renderHome() {
   const hasGame = S.players.length > 0 && S.players.some(p => p.roleId);
+  const last = loadLastSetup();
   return `
     <div class="center" style="padding-top:6vh">
       <div class="hero">
@@ -828,7 +903,8 @@ function renderHome() {
       <p class="home-sub">Assistant du narrateur · Thiercelieux</p>
       <div class="home-rule"></div>
       ${hasGame ? `<button class="btn-primary btn-big" data-action="resumeGame">▶️ Reprendre la partie</button>` : ''}
-      <button class="btn-big ${hasGame ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
+      ${!hasGame && last?.players?.length ? `<button class="btn-primary btn-big" data-action="replayLast">🔁 Rejouer avec la même table (${last.players.length} joueurs)</button>` : ''}
+      <button class="btn-big ${hasGame || last?.players?.length ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
       <div class="spacer"></div>
       <p class="muted small">L'app guide le narrateur : ordre d'appel de la nuit,<br>morts automatiques, minuteurs de débat et de vote.</p>
     </div>`;
@@ -847,6 +923,7 @@ function renderPlayersSetup() {
       <input type="text" id="newPlayerName" placeholder="Prénom du joueur…" autocomplete="off">
       <button class="btn-primary" data-action="addPlayer">＋</button>
     </div>
+    ${renderRosterChips()}
     ${S.players.map((p, i) => `
       <div class="player-row">
         <span class="num">${i + 1}.</span>
@@ -857,6 +934,29 @@ function renderPlayersSetup() {
       </div>`).join('')}
     ${S.players.length ? `<button class="btn-primary btn-big" data-action="toRoles">Choisir les personnages →</button>` : ''}
   `;
+}
+
+// ——— Joueurs déjà enregistrés : ajout en un tap ———
+function renderRosterChips() {
+  const available = loadRoster().filter(n => !S.players.some(p => p.name === n));
+  if (!available.length) return '';
+  return `
+    <div class="panel" style="padding:12px 14px">
+      <div class="row-between">
+        <h3 style="margin:0">💾 Joueurs enregistrés</h3>
+        <span class="row">
+          <button class="btn-sm" data-action="addAllRoster">Tout ajouter</button>
+          <button class="btn-sm btn-ghost" data-action="clearRoster">Oublier</button>
+        </span>
+      </div>
+      <div class="pick-list" style="margin-bottom:0">
+        ${available.map(n => `
+          <span class="roster-chip">
+            <button class="pick-btn" data-action="addFromRoster" data-arg="${esc(n)}">＋ ${esc(n)}</button>
+            <button class="roster-x" data-action="removeFromRoster" data-arg="${esc(n)}" title="Retirer de la liste">×</button>
+          </span>`).join('')}
+      </div>
+    </div>`;
 }
 
 // ——— Rôles (setup) ———
@@ -1045,7 +1145,8 @@ function renderVictory() {
       <h2>${w.title}</h2>
       <p>${w.text}</p>
       <div class="spacer"></div>
-      <button class="btn-primary btn-big" data-action="endGame">🎉 Terminer la partie</button>
+      <button class="btn-primary btn-big" data-action="nextGame">🔁 Partie suivante (même table)</button>
+      <button class="btn-big" data-action="endGame">🎉 Terminer la partie</button>
       <button class="btn-big btn-ghost" data-action="continueAnyway">Continuer quand même</button>
     </div>
     ${renderBoard()}`;

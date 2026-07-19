@@ -229,6 +229,15 @@ input::placeholder { color: #6e6596; }
 }
 .player-row .name { flex: 1; font-weight: 600; }
 
+/* ——— Joueurs enregistrés ——— */
+.roster-chip { display: inline-flex; align-items: center; }
+.roster-chip .pick-btn { border-radius: 999px 0 0 999px; border-right: none; }
+.roster-chip .roster-x {
+  border-radius: 0 999px 999px 0; padding: 10px 12px;
+  background: var(--bg2); border-color: var(--border); color: var(--muted);
+  font-weight: 700;
+}
+
 /* ——— Sélection des rôles ——— */
 .role-card {
   display: flex; gap: 12px; align-items: center; position: relative;
