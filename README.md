@@ -13,6 +13,7 @@ Aucune installation, aucun serveur : ouvrez simplement `index.html` dans un navi
 - **🌅 Aube automatique** : les morts sont calculées (Salvateur, potion de vie, résistance de l'Ancien, infection…) et les enchaînements gérés pas à pas : tir du Chasseur, mort de chagrin des amoureux, succession du Capitaine, épée rouillée du Chevalier, transformation de l'Enfant Sauvage, grognement de l'ours…
 - **☀️ Jour** : élection du Capitaine, **minuteurs de débat et de vote** (réglables, avec bip), résolution du vote : égalité → Bouc Émissaire ou Capitaine, Idiot du Village gracié, Servante Dévouée, 2ᵉ vote du Juge Bègue, rappel des +2 voix du Corbeau.
 - **🏆 Victoires détectées** : Village, Loups, Amoureux, Joueur de Flûte, Loup Blanc, Ange.
+- **🏘️ Option « Le Village »** : les 9 bâtiments de l'extension (Châtelain, Bailli, Tavernier, Barbier, Boulanger, Institutrice, Rebouteux, Confesseur, Fermiers) attribués aléatoirement ou à la main, affichés sur le tableau des joueurs avec rappel pendant le jour.
 - **👥 Tableau de bord** : état de chaque joueur (vivant, capitaine, amoureux, charmé, infecté…), pouvoirs restants, corrections manuelles.
 - **📜 Journal** de tous les événements et **❓ aide-mémoire** complet (ordre d'appel, rôles, conditions de victoire).
 

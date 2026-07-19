@@ -11,6 +11,7 @@ const defaultState = () => ({
   settings: { debateSec: 240, voteSec: 60 },
   players: [],               // {id, name, roleId, alive, capitaine, lover, charmed, noVote, camp?, infected}
   roleCounts: {},
+  buildingsEnabled: false,   // extension « Le Village » (bâtiments)
   dealMode: null,            // 'phone' | 'list'
   dealDone: [],              // ids ayant vu leur carte
   dealShow: null,            // id en cours de révélation (mode téléphone)
@@ -420,12 +421,19 @@ const actions = {
     update();
   },
   roleSuggest() { S.roleCounts = suggestComposition(S.players.length); update(); },
+  toggleBuildings() {
+    S.buildingsEnabled = !S.buildingsEnabled;
+    if (!S.buildingsEnabled) S.players.forEach(p => delete p.building);
+    update();
+  },
+  dealBuildings() { assignBuildings(); update(); },
   roleClear() { S.roleCounts = {}; update(); },
   backToPlayers() { S.screen = 'players'; update(); },
   toDeal() {
     const total = Object.values(S.roleCounts).reduce((a, b) => a + b, 0);
     if (total !== S.players.length) { toast(`Il faut exactement ${S.players.length} cartes (actuellement ${total}).`); return; }
     dealCards();
+    if (S.buildingsEnabled) assignBuildings();
     S.screen = 'deal'; S.dealMode = null; S.dealDone = []; S.dealShow = null; S.dealRevealed = false;
     update();
   },
@@ -741,6 +749,22 @@ function dealCards() {
   S.players.forEach((p, i) => { p.roleId = deck[i]; });
 }
 
+// Attribue les bâtiments du Village : les 8 bâtiments uniques d'abord,
+// puis tout le monde restant est Fermier.
+function assignBuildings() {
+  const uniques = BUILDINGS.filter(b => !b.multi).map(b => b.id);
+  for (let i = uniques.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [uniques[i], uniques[j]] = [uniques[j], uniques[i]];
+  }
+  const order = [...S.players];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  order.forEach((p, i) => { p.building = i < uniques.length ? uniques[i] : 'fermier'; });
+}
+
 function curStep() { return S.night?.steps[S.night.idx]; }
 
 // ————————————————————————— Rendu —————————————————————————
@@ -866,6 +890,15 @@ function renderRolesSetup() {
         </div>`;
       }).join('')}
     `).join('')}
+    <div class="panel ${S.buildingsEnabled ? 'panel-accent' : ''}">
+      <div class="row-between">
+        <div>
+          <b>🏘️ Extension « Le Village »</b><br>
+          <span class="muted small">Chaque joueur reçoit en plus un bâtiment visible : Châtelain, Bailli, Tavernier, Barbier, Boulanger, Institutrice, Rebouteux, Confesseur — les autres sont Fermiers.</span>
+        </div>
+        <button class="${S.buildingsEnabled ? 'btn-ok' : ''}" data-action="toggleBuildings">${S.buildingsEnabled ? '✅ Activée' : 'Activer'}</button>
+      </div>
+    </div>
     <button class="btn-primary btn-big" data-action="toDeal" ${ok ? '' : 'disabled'}>Distribuer les cartes →</button>
     <div class="spacer"></div>
   `;
@@ -926,7 +959,21 @@ function renderDeal() {
       <button class="btn-big btn-ghost" data-action="redeal">🔀 Re-mélanger</button>
       <button class="btn-big btn-primary" data-action="startGame">🌙 Commencer la partie</button>`;
   }
+  const buildingsPanel = S.buildingsEnabled ? `
+    <details class="panel" open>
+      <summary>🏘️ Bâtiments du Village (publics)</summary>
+      <p class="muted small">Posez les tuiles devant les joueurs. Ajustez ici si besoin :</p>
+      ${S.players.map(p => `
+        <div class="player-row">
+          <span class="name">${esc(p.name)}</span>
+          <select data-pid="${p.id}" class="building-select" style="max-width:55%">
+            ${BUILDINGS.map(b => `<option value="${b.id}" ${p.building === b.id ? 'selected' : ''}>${b.icon} ${b.name}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      <button class="btn-sm" data-action="dealBuildings">🔀 Rebattre les bâtiments</button>
+    </details>` : '';
   const extra = `
+    ${buildingsPanel}
     ${roleInPlay('voleur') ? `<div class="panel small">🃏 <b>Voleur en jeu</b> : préparez 2 cartes supplémentaires face cachée au centre de la table.</div>` : ''}
     ${roleInPlay('comedien') ? `<div class="panel small">🎭 <b>Comédien en jeu</b> : préparez 3 cartes à pouvoir non distribuées, face visible.</div>` : ''}
     ${roleInPlay('abominable_sectaire') ? `<div class="panel small">🕯️ <b>Abominable Sectaire en jeu</b> : annoncez à voix haute la séparation du village en 2 groupes (ex. : gauche / droite de la table).</div>` : ''}`;
@@ -993,6 +1040,9 @@ function pickButtons(step) {
   const multi = step.ui === 'pickMulti' || step.ui === 'flute';
   let candidates = alivePlayers();
   if (step.onlyWolves) candidates = candidates.filter(p => isWolfSide(p) && p.roleId !== 'loup_blanc');
+  // Règle officielle : les loups ne peuvent pas dévorer un des leurs
+  // (seul le Loup Blanc en a le pouvoir, lors de son réveil solitaire).
+  if (step.key === 'loups' || step.key === 'gml') candidates = candidates.filter(p => !isWolfSide(p));
   if (step.key === 'salvateur' && S.flags.lastProtected != null) candidates = candidates.filter(p => p.id !== S.flags.lastProtected);
   if (step.ui === 'flute') candidates = candidates.filter(p => !p.charmed && p.roleId !== 'joueur_flute');
   return `<div class="pick-list">
@@ -1280,6 +1330,7 @@ function renderDay() {
         ${S.players.some(p => p.noVote && p.alive) ? `<p class="small">🤡 Ne vote(nt) pas : ${S.players.filter(p => p.noVote && p.alive).map(p => esc(p.name)).join(', ')}</p>` : ''}
         ${timerHTML('debat', S.settings.debateSec, 'Temps de débat')}
       </div>
+      ${renderBuildingsReminder()}
       <button class="btn-primary btn-big" data-action="toVote">🗳️ Passer au vote →</button>`;
   } else if (stage === 'vote') {
     content = `
@@ -1343,6 +1394,22 @@ function renderDay() {
   return content;
 }
 
+// ——— Rappel des bâtiments (extension Le Village) ———
+function renderBuildingsReminder() {
+  if (!S.buildingsEnabled) return '';
+  const holders = alivePlayers().filter(p => p.building && p.building !== 'fermier');
+  if (!holders.length) return '';
+  return `
+    <details class="panel small">
+      <summary>🏘️ Bâtiments en jeu</summary>
+      ${holders.map(p => {
+        const b = buildingById[p.building];
+        return `<div class="order-item"><span>${b.icon}</span><div><b>${b.name}</b> — ${esc(p.name)}<br><span class="muted">${b.short}</span></div></div>`;
+      }).join('')}
+      <p class="muted" style="margin-top:8px">Appliquez les effets selon votre livret de règles.</p>
+    </details>`;
+}
+
 // ——— Tableau des joueurs ———
 function renderBoard() {
   const alive = alivePlayers().length;
@@ -1369,7 +1436,7 @@ function renderBoard() {
         <span class="picon">${r.icon}</span>
         <div class="pinfo">
           <div class="pname">${esc(p.name)} <span class="status-icons">${st}</span></div>
-          <div class="prole">${r.name} · <span class="camp-tag camp-${camp}">${CAMP_LABEL[camp] || camp}</span></div>
+          <div class="prole">${r.name}${p.building ? ` · ${buildingById[p.building]?.icon} ${buildingById[p.building]?.name}` : ''} · <span class="camp-tag camp-${camp}">${CAMP_LABEL[camp] || camp}</span></div>
         </div>
         ${p.alive
           ? `<button class="btn-sm btn-ghost" data-action="adminToggleCaptain" data-arg="${p.id}">👑</button>
@@ -1446,6 +1513,16 @@ function renderHelp() {
         </div>`).join('')}
     </details>
     <details class="panel">
+      <summary>🏘️ Extension « Le Village » (bâtiments)</summary>
+      <p class="muted small">9 bâtiments posés face visible devant les joueurs, en plus de leur carte secrète : chacun exerce un métier au vu de tous. L'app suit qui possède quoi — appliquez les effets précis selon votre livret de règles.</p>
+      ${BUILDINGS.map(b => `
+        <div class="order-item">
+          <span style="font-size:1.3rem">${b.icon}</span>
+          <div><b>${b.name}</b> <span class="muted small">· jeton : ${b.token}${b.multi ? ' (plusieurs)' : ''}</span><br>
+          <span class="muted small">${b.short}</span></div>
+        </div>`).join('')}
+    </details>
+    <details class="panel">
       <summary>🏆 Conditions de victoire</summary>
       <p>🏡 <b>Village</b> : tous les loups (et solitaires) éliminés.</p>
       <p>🐺 <b>Loups</b> : plus aucun villageois vivant.</p>
@@ -1477,6 +1554,10 @@ document.addEventListener('change', e => {
   if (e.target.classList?.contains('deal-select')) {
     const p = byId(+e.target.dataset.pid);
     if (p) { p.roleId = e.target.value; save(); }
+  }
+  if (e.target.classList?.contains('building-select')) {
+    const p = byId(+e.target.dataset.pid);
+    if (p) { p.building = e.target.value; save(); }
   }
 });
 

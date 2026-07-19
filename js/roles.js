@@ -165,6 +165,32 @@ const CAMP_LABEL = {
   village: 'Village', loups: 'Loups-Garous', solo: 'Solitaire',
 };
 
+// ——— Extension « Le Village » : les 9 bâtiments ———
+// Les bâtiments sont PUBLICS (posés devant les joueurs). L'app suit qui
+// possède quoi et le rappelle au narrateur ; appliquez les effets selon
+// votre livret de règles.
+const BUILDINGS = [
+  { id: 'chatelain', name: 'Le Châtelain', icon: '🏰', token: 'Blason',
+    short: 'Notable du village : il préside la place et pèse dans les débats.' },
+  { id: 'bailli', name: 'Le Bailli', icon: '🗝️', token: 'Double des clés',
+    short: 'Représentant de l’ordre : il encadre le scrutin du village.' },
+  { id: 'tavernier', name: 'Le Tavernier', icon: '🍺', token: 'Gobelet',
+    short: 'Il peut héberger un joueur à la taverne pour la nuit.' },
+  { id: 'barbier', name: 'Le Barbier', icon: '🪒', token: 'Rasoir',
+    short: 'Peut « raser de près » un client en plein jour — à ses risques.' },
+  { id: 'boulanger', name: 'Le Boulanger', icon: '🥖', token: 'Pain',
+    short: 'Chaque matin, il distribue le pain et rythme la vie du village.' },
+  { id: 'institutrice', name: 'L’Institutrice', icon: '🔔', token: 'Cloche',
+    short: 'Elle sonne la cloche et peut discipliner le vote d’un élève turbulent.' },
+  { id: 'rebouteux', name: 'Le Rebouteux', icon: '🧉', token: 'Mortier',
+    short: 'Guérisseur du village : il peut soigner une victime.' },
+  { id: 'confesseur', name: 'Le Confesseur', icon: '📿', token: 'Chapelet',
+    short: 'Il peut recevoir la confession d’un joueur et sonder son âme.' },
+  { id: 'fermier', name: 'Fermier', icon: '🐄', token: 'Vache', multi: true,
+    short: 'La force tranquille du village : sans pouvoir, mais nombreux.' },
+];
+const buildingById = Object.fromEntries(BUILDINGS.map(b => [b.id, b]));
+
 // Suggestion de composition selon le nombre de joueurs.
 function suggestComposition(n) {
   const c = {};
