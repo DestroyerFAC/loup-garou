@@ -277,6 +277,23 @@ input::placeholder { color: #6e6596; }
 .counter-bar .ok { color: var(--ok); font-weight: 800; font-variant-numeric: tabular-nums; }
 .counter-bar .ko { color: var(--danger); font-weight: 800; font-variant-numeric: tabular-nums; }
 
+/* ——— Styles de partie ——— */
+.style-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.style-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  text-align: left; padding: 11px 12px; border-radius: 13px;
+  background: var(--bg2); border-color: var(--border-soft);
+}
+.style-btn .sicon { font-size: 1.5rem; }
+.style-btn .sname { font-family: var(--font-display); font-weight: 700; letter-spacing: .03em; }
+.style-btn .sdesc { color: var(--muted); font-size: .74rem; line-height: 1.35; }
+.style-btn.active {
+  border-color: rgba(233, 182, 77, .65);
+  background: linear-gradient(150deg, var(--card3), var(--bg2) 70%);
+  box-shadow: var(--shadow-soft), inset 0 0 20px rgba(233, 182, 77, .07);
+}
+.style-btn.active .sname { color: var(--accent); }
+
 /* ——— Distribution ——— */
 .deal-name-btn {
   width: 100%; text-align: left; margin: 7px 0; font-weight: 600;

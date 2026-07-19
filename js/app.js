@@ -11,6 +11,7 @@ const defaultState = () => ({
   settings: { debateSec: 240, voteSec: 60 },
   players: [],               // {id, name, roleId, alive, capitaine, lover, charmed, noVote, camp?, infected}
   roleCounts: {},
+  styleId: null,             // style de partie appliqué (repère visuel)
   buildingsEnabled: false,   // extension « Le Village » (bâtiments)
   dealMode: null,            // 'phone' | 'list'
   dealDone: [],              // ids ayant vu leur carte
@@ -400,7 +401,7 @@ const actions = {
   },
   toRoles() {
     if (S.players.length < 4) { toast('Il faut au moins 4 joueurs.'); return; }
-    if (!Object.keys(S.roleCounts).length) S.roleCounts = suggestComposition(S.players.length);
+    if (!Object.keys(S.roleCounts).length) { S.roleCounts = suggestComposition(S.players.length); S.styleId = 'classique'; }
     S.screen = 'roles'; update();
   },
 
@@ -420,7 +421,14 @@ const actions = {
     if (next) S.roleCounts[id] = next; else delete S.roleCounts[id];
     update();
   },
-  roleSuggest() { S.roleCounts = suggestComposition(S.players.length); update(); },
+  roleSuggest() { S.roleCounts = suggestComposition(S.players.length); S.styleId = 'classique'; update(); },
+  applyStyle(id) {
+    S.roleCounts = composeStyle(id, S.players.length);
+    S.styleId = id;
+    const s = styleById[id];
+    toast(`${s.icon} Style « ${s.name} » appliqué — ajustez librement ensuite.`);
+    update();
+  },
   toggleBuildings() {
     S.buildingsEnabled = !S.buildingsEnabled;
     if (!S.buildingsEnabled) S.players.forEach(p => delete p.building);
@@ -868,10 +876,19 @@ function renderRolesSetup() {
     </div>
     <div class="counter-bar">
       <span>Cartes : <span class="${ok ? 'ok' : 'ko'}">${total} / ${n}</span></span>
-      <span class="row">
-        <button class="btn-sm" data-action="roleSuggest">✨ Suggestion</button>
-        <button class="btn-sm btn-ghost" data-action="roleClear">Vider</button>
-      </span>
+      <button class="btn-sm btn-ghost" data-action="roleClear">Vider</button>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">🎛️ Style de partie</h3>
+      <p class="muted small">Même table, ambiances différentes : touchez un style pour générer une composition — puis ajustez carte par carte si vous voulez.</p>
+      <div class="style-grid">
+        ${GAME_STYLES.map(s => `
+          <button class="style-btn ${S.styleId === s.id ? 'active' : ''}" data-action="applyStyle" data-arg="${s.id}">
+            <span class="sicon">${s.icon}</span>
+            <span class="sname">${s.name}</span>
+            <span class="sdesc">${s.desc}</span>
+          </button>`).join('')}
+      </div>
     </div>
     ${groups.map(([title, roles]) => `
       <h3 style="margin-top:14px">${title}</h3>

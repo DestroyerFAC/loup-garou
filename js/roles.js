@@ -191,22 +191,86 @@ const BUILDINGS = [
 ];
 const buildingById = Object.fromEntries(BUILDINGS.map(b => [b.id, b]));
 
-// Suggestion de composition selon le nombre de joueurs.
-function suggestComposition(n) {
+// ——— Styles de partie ———
+// Un même nombre de joueurs, des ambiances différentes : chaque style
+// génère une composition distincte (loups + rôles prioritaires + villageois).
+
+function baseWolves(n) { return n >= 18 ? 4 : n >= 12 ? 3 : n >= 8 ? 2 : 1; }
+
+const GAME_STYLES = [
+  {
+    id: 'classique', name: 'Classique', icon: '🌙',
+    desc: 'La partie traditionnelle : pouvoirs emblématiques et équilibre éprouvé.',
+    priority: ['voyante', 'sorciere', 'chasseur', 'cupidon', 'petite_fille', 'salvateur', 'ancien', 'corbeau', 'montreur_ours', 'renard', 'idiot', 'bouc', 'deux_soeurs'],
+  },
+  {
+    id: 'decouverte', name: 'Découverte', icon: '🌱',
+    desc: 'Peu de pouvoirs, règles simples : idéale pour les nouveaux joueurs.',
+    priority: ['voyante', 'sorciere', 'chasseur', 'cupidon'],
+  },
+  {
+    id: 'enquete', name: 'Enquête', icon: '🔍',
+    desc: 'Beaucoup d’indices : Voyante, Renard, Ours, Petite Fille, Corbeau… aux villageois de recouper.',
+    priority: ['voyante', 'renard', 'montreur_ours', 'petite_fille', 'corbeau', 'sorciere', 'chasseur', 'salvateur', 'deux_soeurs', 'trois_freres'],
+  },
+  {
+    id: 'chaos', name: 'Chaos', icon: '🎭',
+    desc: 'Solitaires et coups de théâtre : Joueur de Flûte, Loup Blanc, Ange, Grand Méchant Loup…',
+    wolfTwist: 'grand_mechant_loup',
+    priority: ['joueur_flute', 'loup_blanc', 'sorciere', 'voyante', 'chasseur', 'comedien', 'juge', 'ange', 'bouc', 'idiot', 'corbeau'],
+  },
+  {
+    id: 'trahisons', name: 'Trahisons', icon: '🗡️',
+    desc: 'Camps mouvants : Chien-Loup, Enfant Sauvage, Infect Père des Loups, Sectaire, amoureux maudits…',
+    wolfTwist: 'infect_pere',
+    priority: ['chien_loup', 'enfant_sauvage', 'ange', 'abominable_sectaire', 'cupidon', 'voyante', 'sorciere', 'chasseur', 'servante', 'salvateur'],
+  },
+  {
+    id: 'surprise', name: 'Surprise', icon: '🎲',
+    desc: 'Composition aléatoire équilibrée — différente à chaque fois. Retentez votre chance !',
+    random: true,
+  },
+];
+const styleById = Object.fromEntries(GAME_STYLES.map(s => [s.id, s]));
+
+function composeStyle(styleId, n) {
+  const style = styleById[styleId] || GAME_STYLES[0];
   const c = {};
-  const add = (id, k = 1) => { c[id] = (c[id] || 0) + k; };
-  const wolves = n >= 18 ? 4 : n >= 12 ? 3 : n >= 8 ? 2 : 1;
-  add('loup', wolves);
-  add('voyante'); add('sorciere'); add('chasseur');
-  if (n >= 8) add('cupidon');
-  if (n >= 9) add('petite_fille');
-  if (n >= 10) add('salvateur');
-  if (n >= 11) add('ancien');
-  if (n >= 12) add('corbeau');
-  if (n >= 13) add('montreur_ours');
-  if (n >= 14) add('renard');
-  if (n >= 15) add('idiot');
-  const used = Object.values(c).reduce((a, b) => a + b, 0);
+  let used = 0;
+  const add = (id, k = 1) => { c[id] = (c[id] || 0) + k; used += k; };
+
+  // Les loups : le style peut remplacer un loup simple par un loup spécial.
+  const w = baseWolves(n);
+  if (style.wolfTwist && w >= 2) { add('loup', w - 1); add(style.wolfTwist); }
+  else add('loup', w);
+
+  // Rôles prioritaires du style (ou tirage aléatoire pour « Surprise »).
+  let priority = style.priority || [];
+  if (style.random) {
+    priority = ROLES
+      .filter(r => !['loup', 'villageois', 'voleur'].includes(r.id) && r.camp !== 'loups')
+      .map(r => r.id);
+    for (let i = priority.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [priority[i], priority[j]] = [priority[j], priority[i]];
+    }
+    // Une chance sur trois de corser les loups avec une variante.
+    if (w >= 2 && Math.random() < 1 / 3) {
+      c.loup--; used--;
+      add(Math.random() < .5 ? 'grand_mechant_loup' : 'infect_pere');
+    }
+  }
+  for (const id of priority) {
+    if (used >= n) break;
+    if (c[id]) continue;
+    const r = roleById[id];
+    const k = r.pair || 1;
+    if (used + k > n) continue;
+    add(id, k);
+  }
   if (n - used > 0) add('villageois', n - used);
   return c;
 }
+
+// Compatibilité : la suggestion par défaut est le style Classique.
+function suggestComposition(n) { return composeStyle('classique', n); }
