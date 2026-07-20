@@ -205,6 +205,33 @@ const BUILDINGS = [
 ];
 const buildingById = Object.fromEntries(BUILDINGS.map(b => [b.id, b]));
 
+// ——— Cartes Événements (inspirées de la Nouvelle Lune) ———
+// Tirées au matin, à la discrétion du narrateur. Chaque carte donne une
+// consigne précise à annoncer au village.
+const EVENTS = [
+  { id: 'nuit_noire', icon: '🌑', name: 'Nuit noire',
+    text: 'Au prochain vote, le village votera les yeux fermés, au doigt levé : seul le narrateur compte les voix.' },
+  { id: 'pleine_lune_ev', icon: '🌕', name: 'Pleine lune',
+    text: 'La nuit prochaine, les Loups-Garous devront désigner leur victime sans aucune concertation : unanimité silencieuse, sinon pas de victime.' },
+  { id: 'couvre_feu', icon: '🕯️', name: 'Couvre-feu',
+    text: 'Pas de débat aujourd’hui : le vote a lieu immédiatement après les annonces du matin.' },
+  { id: 'offrande', icon: '🎁', name: 'Offrande au dieu Loup',
+    text: 'Le village désigne ensemble un joueur : il sera protégé des Loups-Garous la nuit prochaine.' },
+  { id: 'voeu_silence', icon: '🤐', name: 'Vœu de silence',
+    text: 'Interdiction de parler jusqu’au vote : le débat se fait uniquement par gestes. Celui qui parle reçoit 1 voix contre lui.' },
+  { id: 'grand_echange', icon: '🔄', name: 'Le grand déménagement',
+    text: 'Deux joueurs tirés au sort échangent leurs places autour de la table (les voisinages changent !).' },
+  { id: 'esprit_frappeur', icon: '👻', name: 'Esprit frappeur',
+    text: 'L’esprit d’un mort s’exprime : le narrateur révèle le rôle d’un joueur éliminé qui ne l’avait pas été.' },
+  { id: 'double_accusation', icon: '⚖️', name: 'Double accusation',
+    text: 'Au prochain vote, chaque joueur vote avec DEUX doigts pour deux accusés différents.' },
+  { id: 'reves_premonitoires', icon: '💭', name: 'Rêves prémonitoires',
+    text: 'Chaque joueur, à tour de rôle, raconte en une phrase le « rêve » qu’il a fait cette nuit (indice ou intox !).' },
+  { id: 'beuverie', icon: '🍺', name: 'Beuverie à la taverne',
+    text: 'Le village a trop bu : la nuit prochaine, tous les pouvoirs de nuit du village sont suspendus (les loups, eux, rôdent toujours).' },
+];
+const eventById = Object.fromEntries(EVENTS.map(e => [e.id, e]));
+
 // ——— Styles de partie ———
 // Un même nombre de joueurs, des ambiances différentes : chaque style
 // génère une composition distincte (loups + rôles prioritaires + villageois).

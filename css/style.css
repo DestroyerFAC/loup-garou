@@ -500,6 +500,54 @@ summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   color: var(--muted);
 }
 
+/* ——— Statistiques ——— */
+.stats-row {
+  display: grid; grid-template-columns: 1fr 62px 62px 78px;
+  gap: 6px; padding: 8px 0; border-bottom: 1px dashed var(--border-soft);
+  align-items: center; font-variant-numeric: tabular-nums;
+}
+.stats-row span:not(:first-child) { text-align: center; }
+.stats-head { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ——— Cartes Événements ——— */
+.event-card {
+  display: flex; gap: 12px; align-items: center;
+  background: var(--accent-soft); border: 1px dashed rgba(233, 182, 77, .5);
+  border-radius: 12px; padding: 12px; margin-top: 8px;
+}
+
+/* ——— Écran du village (affichage public) ——— */
+.village-screen {
+  position: fixed; inset: 0; z-index: 40;
+  background:
+    radial-gradient(420px 300px at 82% -6%, var(--sky-glow) 0%, transparent 70%),
+    var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 24px; text-align: center;
+}
+.village-screen .vs-phase {
+  font-family: var(--font-display); font-size: 1.6rem; font-weight: 700;
+  letter-spacing: .08em; color: var(--accent);
+}
+.village-screen .vs-timer {
+  font-family: var(--font-display); font-size: 7rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1;
+  text-shadow: 0 0 40px rgba(233, 182, 77, .3);
+}
+.village-screen .vs-timer.warning { color: var(--danger); animation: pulse 1s infinite; }
+.village-screen .vs-sub { color: var(--muted); font-size: 1.05rem; letter-spacing: .1em; text-transform: uppercase; }
+.village-screen .vs-cap { font-size: 1.1rem; }
+.village-screen .vs-players {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 560px;
+}
+.village-screen .vs-p {
+  padding: 7px 14px; border-radius: 999px; font-weight: 600;
+  background: var(--card2); border: 1px solid var(--border-soft);
+}
+.village-screen .vs-p.vs-dead { opacity: .35; text-decoration: line-through; }
+.village-screen .vs-count { color: var(--muted); }
+.village-screen .vs-exit { position: fixed; bottom: 14px; right: 14px; opacity: .55; }
+
 /* ——— Apparition des écrans ——— */
 .panel, .victory, .big-card, .death-item, .no-death { animation: rise .3s ease-out both; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }

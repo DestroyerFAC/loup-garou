@@ -14,6 +14,11 @@ Aucune installation, aucun serveur : ouvrez simplement `index.html` dans un navi
 - **☀️ Jour** : élection du Capitaine, **minuteurs de débat et de vote** (réglables, avec bip), résolution du vote : égalité → Bouc Émissaire ou Capitaine, Idiot du Village gracié, Servante Dévouée, 2ᵉ vote du Juge Bègue, rappel des +2 voix du Corbeau.
 - **🏆 Victoires détectées** : Village, Loups, Amoureux, Joueur de Flûte, Loup Blanc, Ange.
 - **🏘️ Option « Le Village »** : les 9 bâtiments de l'extension (Châtelain, Bailli, Tavernier, Barbier, Boulanger, Institutrice, Rebouteux, Confesseur, Fermiers) attribués aléatoirement ou à la main, affichés sur le tableau des joueurs avec rappel pendant le jour.
+- **🎴 Cartes Événements** (option) : inspirées de la Nouvelle Lune, tirées au matin pour bousculer le village (vote à l'aveugle, couvre-feu, vœu de silence…).
+- **📊 Historique & statistiques** : chaque partie est archivée — parties par joueur, fois loup, victoires — avec **récit de partie à partager** (rôles, chronique nuit par nuit).
+- **📺 Écran du village** : affichage public sans spoiler (minuteur géant, vivants/morts, capitaine) à montrer au groupe pendant les débats.
+- **🔊 Ambiances sonores** synthétisées (hurlement à la nuit, aube, cloche du vote) avec réglage.
+- **📱 PWA installable** : ajoutez l'app à l'écran d'accueil, elle fonctionne hors ligne et **garde l'écran allumé** pendant la partie (Wake Lock).
 - **👥 Tableau de bord** : état de chaque joueur (vivant, capitaine, amoureux, charmé, infecté…), pouvoirs restants, corrections manuelles.
 - **📜 Journal** de tous les événements et **❓ aide-mémoire** complet (ordre d'appel, rôles, conditions de victoire).
 

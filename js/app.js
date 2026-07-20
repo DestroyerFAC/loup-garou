@@ -4,7 +4,30 @@
 const STORAGE_KEY = 'loupgarou_state_v1';
 const ROSTER_KEY = 'loupgarou_roster_v1';   // noms des joueurs déjà vus
 const LAST_KEY = 'loupgarou_last_v1';       // dernière table (joueurs + composition)
+const HISTORY_KEY = 'loupgarou_history_v1'; // parties archivées (stats & récits)
 const $app = document.getElementById('app');
+
+// ——— PWA : app installable, utilisable hors ligne ———
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && window === window.top) {
+  navigator.serviceWorker.register('sw.js').catch(() => { /* hébergement sans SW */ });
+}
+
+// ——— Écran toujours allumé pendant la partie (Wake Lock) ———
+let wakeLock = null;
+async function updateWakeLock() {
+  const want = S.screen === 'game';
+  try {
+    if (want && !wakeLock && 'wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      await wakeLock.release(); wakeLock = null;
+    }
+  } catch (e) { /* refusé ou non supporté */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { wakeLock = null; updateWakeLock(); }
+});
 
 // ——— Mémoire des joueurs (persiste d'une partie à l'autre) ———
 function loadRoster() {
@@ -30,6 +53,74 @@ function rememberLastSetup() {
 function makePlayer(name) {
   return { id: Date.now() + Math.floor(Math.random() * 100000), name, roleId: null, alive: true };
 }
+// ——— Historique des parties (stats & récits) ———
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch (e) { return []; }
+}
+function gameWinnerPredicate(winner) {
+  switch (winner) {
+    case 'village': return p => !isWolfSide(p) && roleById[p.roleId].camp !== 'solo';
+    case 'loups': return p => isWolfSide(p) && p.roleId !== 'loup_blanc';
+    case 'amoureux': return p => p.lover;
+    case 'flute': return p => p.roleId === 'joueur_flute';
+    case 'loup_blanc': return p => p.roleId === 'loup_blanc';
+    case 'ange': return p => p.roleId === 'ange';
+    default: return () => false;
+  }
+}
+function archiveGame() {
+  if (!S.winner || S.historySaved || S.winner === 'personne' && !S.players.length) return;
+  const won = gameWinnerPredicate(S.winner);
+  const entry = {
+    date: Date.now(), winner: S.winner, styleId: S.styleId,
+    days: S.dayCount, nights: S.nightNumber,
+    players: S.players.map(p => ({
+      name: p.name, roleId: p.roleId, wolf: isWolfSide(p), alive: p.alive, won: !!won(p),
+    })),
+    log: S.log.map(l => `${l.when} — ${l.msg}`),
+  };
+  try {
+    const h = loadHistory(); h.unshift(entry);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 50)));
+  } catch (e) { /* stockage indisponible */ }
+  S.historySaved = true;
+}
+
+// ——— Récit de la partie à partager ———
+function recapText(entry) {
+  const w = WINNER_INFO[entry.winner] || { icon: '🏁', title: 'Fin de partie' };
+  const d = new Date(entry.date);
+  const wolves = entry.players.filter(p => p.wolf).map(p => p.name);
+  const lines = [
+    `🐺 LOUP-GAROU — Partie du ${d.toLocaleDateString('fr-FR')} (${entry.players.length} joueurs)`,
+    `${w.icon} ${w.title}`,
+    `⏳ ${entry.nights} nuit${entry.nights > 1 ? 's' : ''}, ${entry.days} jour${entry.days > 1 ? 's' : ''}`,
+    '',
+    `Les loups étaient : ${wolves.join(', ') || '—'}`,
+    '',
+    '🎴 Les rôles :',
+    ...entry.players.map(p => `  ${p.won ? '🏆' : p.alive ? '🙂' : '💀'} ${p.name} — ${roleById[p.roleId]?.icon || ''} ${roleById[p.roleId]?.name || p.roleId}`),
+    '',
+    '📜 Chronique :',
+    ...entry.log.map(l => `  ${l}`),
+  ];
+  return lines.join('\n');
+}
+async function shareText(text) {
+  try {
+    if (navigator.share) { await navigator.share({ text }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('📋 Récit copié ! Collez-le dans votre discussion de groupe.');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('📋 Récit copié !'); } catch (e2) { toast('Impossible de copier automatiquement.'); }
+    ta.remove();
+  }
+}
+
 // Remet les joueurs à neuf (mêmes noms, tout état de partie effacé).
 function resetPlayersForNewGame() {
   S.players.forEach(p => {
@@ -48,6 +139,9 @@ const defaultState = () => ({
   roleCounts: {},
   styleId: null,             // style de partie appliqué (repère visuel)
   buildingsEnabled: false,   // extension « Le Village » (bâtiments)
+  eventsEnabled: false,      // cartes Événements (inspirées Nouvelle Lune)
+  historySaved: false,       // partie déjà archivée dans l'historique
+  villageScreen: false,      // affichage public « écran du village »
   dealMode: null,            // 'phone' | 'list'
   dealDone: [],              // ids ayant vu leur carte
   dealShow: null,            // id en cours de révélation (mode téléphone)
@@ -107,9 +201,18 @@ const CAUSE_LABEL = {
 };
 
 // ——————————————————————— Sons / vibrations ———————————————————————
+let _audioCtx = null;
+function audioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+function soundOn() { return S.settings.sound !== false; }
+
 function beep(times = 3) {
+  if (!soundOn()) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtx();
     for (let i = 0; i < times; i++) {
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
@@ -119,6 +222,57 @@ function beep(times = 3) {
     }
   } catch (e) { /* audio indisponible */ }
   if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+}
+
+// Ambiances synthétisées (aucun fichier externe) :
+// hurlement à la tombée de la nuit, aube au réveil, cloche au vote.
+function playAmbience(kind) {
+  if (!soundOn()) return;
+  try {
+    const ctx = audioCtx();
+    const t0 = ctx.currentTime;
+    if (kind === 'howl') {
+      // Hurlement de loup : glissando avec vibrato, deux voix légèrement désaccordées
+      [0, 6].forEach(detune => {
+        const o = ctx.createOscillator(), g = ctx.createGain(), v = ctx.createOscillator(), vg = ctx.createGain();
+        o.type = 'sine'; o.detune.value = detune;
+        v.frequency.value = 5.5; vg.gain.value = 9;
+        v.connect(vg); vg.connect(o.frequency);
+        o.frequency.setValueAtTime(240, t0);
+        o.frequency.linearRampToValueAtTime(540, t0 + 0.55);
+        o.frequency.setValueAtTime(540, t0 + 0.9);
+        o.frequency.linearRampToValueAtTime(360, t0 + 1.8);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.14, t0 + 0.35);
+        g.gain.setValueAtTime(0.14, t0 + 1.1);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t0); v.start(t0); o.stop(t0 + 2.05); v.stop(t0 + 2.05);
+      });
+    } else if (kind === 'dawn') {
+      // Aube : trois notes ascendantes claires
+      [523.25, 659.25, 783.99].forEach((f, i) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'triangle'; o.frequency.value = f;
+        const t = t0 + i * 0.22;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t); o.stop(t + 0.5);
+      });
+    } else if (kind === 'bell') {
+      // Cloche du vote : fondamentale + partiel, longue résonance
+      [[440, 0.18], [880, 0.1], [1318, 0.05]].forEach(([f, vol]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        g.gain.setValueAtTime(vol, t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t0); o.stop(t0 + 1.65);
+      });
+    }
+  } catch (e) { /* audio indisponible */ }
 }
 
 // ——————————————————————— Minuteurs (hors état sauvegardé) ———————————————————————
@@ -157,6 +311,12 @@ function timerPaint(key) {
   if (bar) {
     bar.style.width = `${t.total ? Math.round((t.remaining / t.total) * 100) : 0}%`;
     bar.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
+  }
+  // Miroir grand format sur l'écran du village
+  const big = document.getElementById(`timerbig-${key}`);
+  if (big) {
+    big.textContent = fmtTime(t.remaining);
+    big.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
   }
 }
 function fmtTime(s) { return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
@@ -442,10 +602,11 @@ const actions = {
   },
   // Nouvelle partie avec la même table (depuis l'écran de victoire ou l'accueil)
   nextGame() {
+    archiveGame();
     resetPlayersForNewGame();
     S.phase = 'night'; S.nightNumber = 0; S.dayCount = 0;
     S.night = null; S.day = null; S.announce = { deaths: [], queue: [] };
-    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false;
+    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false; S.historySaved = false;
     S.screen = 'players';
     toast('🔁 Même table ! Ajoutez ou retirez des joueurs, puis continuez.');
     update();
@@ -506,6 +667,42 @@ const actions = {
     if (!S.buildingsEnabled) S.players.forEach(p => delete p.building);
     update();
   },
+  toggleEvents() { S.eventsEnabled = !S.eventsEnabled; update(); },
+  drawEvent() {
+    let drawn = S.flags.eventsDrawn || [];
+    let pool = EVENTS.filter(e => !drawn.includes(e.id));
+    if (!pool.length) { drawn = []; pool = EVENTS; } // paquet épuisé : on rebats tout
+    const ev = pool[Math.floor(Math.random() * pool.length)];
+    S.flags.eventsDrawn = [...drawn, ev.id];
+    S.flags.currentEvent = ev.id;
+    addLog(`🎴 Événement : ${ev.icon} ${ev.name}`);
+    update();
+  },
+  dismissEvent() { S.flags.currentEvent = null; update(); },
+  shareRecap() {
+    archiveGame();
+    const h = loadHistory();
+    if (h.length) shareText(recapText(h[0]));
+  },
+  shareHistoryRecap(idx) {
+    const h = loadHistory();
+    if (h[+idx]) shareText(recapText(h[+idx]));
+  },
+  toStats() { S.screen = 'stats'; update(); },
+  statsBack() { S.screen = 'home'; update(); },
+  clearHistory() { askConfirm('Effacer tout l’historique des parties ?', 'doClearHistory'); },
+  doClearHistory() { try { localStorage.removeItem(HISTORY_KEY); } catch (e) { } update(); },
+  showVillageScreen() { S.villageScreen = true; update(); },
+  hideVillageScreen() { S.villageScreen = false; update(); },
+  toggleSound() {
+    // conserve les durées saisies avant de re-rendre la modale
+    const d = +document.getElementById('set-debate')?.value;
+    const v = +document.getElementById('set-vote')?.value;
+    if (d > 0) S.settings.debateSec = Math.round(d * 60);
+    if (v > 0) S.settings.voteSec = v;
+    S.settings.sound = !soundOn();
+    update();
+  },
   dealBuildings() { assignBuildings(); update(); },
   roleClear() { S.roleCounts = {}; update(); },
   backToPlayers() { S.screen = 'players'; update(); },
@@ -540,7 +737,7 @@ const actions = {
     // Groupes du Sectaire : info au lancement
     S.players.forEach(p => { p.alive = true; });
     S.phase = 'night'; S.nightNumber = 1; S.dayCount = 0;
-    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false;
+    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false; S.historySaved = false;
     addLog(`🎲 Début de partie : ${S.players.length} joueurs — ${Object.entries(S.roleCounts).map(([id, n]) => `${roleById[id].name}${n > 1 ? ' ×' + n : ''}`).join(', ')}`);
     buildNight();
     S.screen = 'game'; S.tab = 'flow';
@@ -635,7 +832,7 @@ const actions = {
     S.flags.sorciereMortUsed = S.night.actions.sorciereKill != null;
     update();
   },
-  finishNight() { resolveNight(); update(); },
+  finishNight() { resolveNight(); playAmbience('dawn'); update(); },
 
   // ——— Matin (annonces & cascades) ———
   promptPick(arg) {
@@ -678,7 +875,7 @@ const actions = {
     update();
   },
   skipCaptain() { addLog('👑 Pas de Capitaine élu.'); S.day.stage = 'debat'; update(); },
-  toVote() { S.day.stage = 'vote'; timerReset('vote', S.settings.voteSec); update(); },
+  toVote() { S.day.stage = 'vote'; timerReset('vote', S.settings.voteSec); playAmbience('bell'); update(); },
   backToDebate() { S.day.stage = 'debat'; update(); },
   voteResult(arg) {
     S.announce = { deaths: [], queue: [] };
@@ -770,13 +967,16 @@ const actions = {
     S.nightNumber++;
     S.phase = 'night';
     S.announce = { deaths: [], queue: [] };
+    S.flags.currentEvent = null;
+    S.villageScreen = false;
     buildNight();
+    playAmbience('howl');
     update();
   },
 
   // ——— Victoire ———
   continueAnyway() { S.winnerDismissed = true; update(); },
-  endGame() { const keep = S.settings; S = defaultState(); S.settings = keep; update(); },
+  endGame() { archiveGame(); const keep = S.settings; S = defaultState(); S.settings = keep; update(); },
 
   // ——— Tableau des joueurs (admin) ———
   adminKill(id) { askConfirm(`Éliminer ${byId(+id)?.name} manuellement ?`, 'doAdminKill', id); },
@@ -853,6 +1053,7 @@ function curStep() { return S.night?.steps[S.night.idx]; }
 function render() {
   // Ambiance visuelle selon la phase (ciel étoilé la nuit, ambre le jour)
   document.body.className = S.screen === 'game' ? `phase-${S.phase}` : 'phase-night';
+  updateWakeLock();
   let html = '';
   switch (S.screen) {
     case 'home': html = renderHome(); break;
@@ -860,7 +1061,9 @@ function render() {
     case 'roles': html = renderRolesSetup(); break;
     case 'deal': html = renderDeal(); break;
     case 'game': html = renderGame(); break;
+    case 'stats': html = renderStats(); break;
   }
+  if (S.villageScreen && S.screen === 'game') html = renderVillageScreen();
   if (S.showSettings) html += renderSettings();
   if (confirmBox) html += `
     <div class="modal-backdrop">
@@ -905,6 +1108,7 @@ function renderHome() {
       ${hasGame ? `<button class="btn-primary btn-big" data-action="resumeGame">▶️ Reprendre la partie</button>` : ''}
       ${!hasGame && last?.players?.length ? `<button class="btn-primary btn-big" data-action="replayLast">🔁 Rejouer avec la même table (${last.players.length} joueurs)</button>` : ''}
       <button class="btn-big ${hasGame || last?.players?.length ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
+      ${loadHistory().length ? `<button class="btn-big btn-ghost" data-action="toStats">📊 Historique & statistiques</button>` : ''}
       <div class="spacer"></div>
       <p class="muted small">L'app guide le narrateur : ordre d'appel de la nuit,<br>morts automatiques, minuteurs de débat et de vote.</p>
     </div>`;
@@ -1014,6 +1218,15 @@ function renderRolesSetup() {
           <span class="muted small">Chaque joueur reçoit en plus un bâtiment visible : Châtelain, Bailli, Tavernier, Barbier, Boulanger, Institutrice, Rebouteux, Confesseur — les autres sont Fermiers.</span>
         </div>
         <button class="${S.buildingsEnabled ? 'btn-ok' : ''}" data-action="toggleBuildings">${S.buildingsEnabled ? '✅ Activée' : 'Activer'}</button>
+      </div>
+    </div>
+    <div class="panel ${S.eventsEnabled ? 'panel-accent' : ''}">
+      <div class="row-between">
+        <div>
+          <b>🎴 Cartes Événements</b><br>
+          <span class="muted small">Inspirées de la Nouvelle Lune : certains matins, tirez une carte qui bouscule le village (vote à l'aveugle, couvre-feu, vœu de silence…).</span>
+        </div>
+        <button class="${S.eventsEnabled ? 'btn-ok' : ''}" data-action="toggleEvents">${S.eventsEnabled ? '✅ Activées' : 'Activer'}</button>
       </div>
     </div>
     <button class="btn-primary btn-big" data-action="toDeal" ${ok ? '' : 'disabled'}>Distribuer les cartes →</button>
@@ -1145,6 +1358,7 @@ function renderVictory() {
       <h2>${w.title}</h2>
       <p>${w.text}</p>
       <div class="spacer"></div>
+      <button class="btn-big" data-action="shareRecap">📤 Partager le récit de la partie</button>
       <button class="btn-primary btn-big" data-action="nextGame">🔁 Partie suivante (même table)</button>
       <button class="btn-big" data-action="endGame">🎉 Terminer la partie</button>
       <button class="btn-big btn-ghost" data-action="continueAnyway">Continuer quand même</button>
@@ -1411,6 +1625,7 @@ function renderMorning() {
     ${!q ? `
       ${oursNote}
       ${S.flags.corbeauTarget != null ? `<div class="panel small">🐦‍⬛ Annoncez : <b>${esc(byId(S.flags.corbeauTarget)?.name)}</b> a été visé(e) par le Corbeau → il/elle commence le vote avec <b>2 voix contre lui/elle</b>.</div>` : ''}
+      ${renderEventPanel()}
       <button class="btn-primary btn-big" data-action="toDay">☀️ Passer au jour (débat & vote)</button>` : ''}
   `;
 }
@@ -1462,8 +1677,10 @@ function renderDay() {
         ${S.players.some(p => p.noVote && p.alive) ? `<p class="small">🤡 Ne vote(nt) pas : ${S.players.filter(p => p.noVote && p.alive).map(p => esc(p.name)).join(', ')}</p>` : ''}
         ${timerHTML('debat', S.settings.debateSec, 'Temps de débat')}
       </div>
+      ${renderEventPanel()}
       ${renderBuildingsReminder()}
-      <button class="btn-primary btn-big" data-action="toVote">🗳️ Passer au vote →</button>`;
+      <button class="btn-primary btn-big" data-action="toVote">🗳️ Passer au vote →</button>
+      <button class="btn-big btn-ghost" data-action="showVillageScreen">📺 Écran du village (affichage public)</button>`;
   } else if (stage === 'vote') {
     content = `
       <div class="panel panel-accent">
@@ -1477,6 +1694,7 @@ function renderDay() {
           <button data-action="voteResult" data-arg="none">🕊️ Personne</button>
         </div>
         <button class="btn-sm btn-ghost" data-action="backToDebate">← Revenir au débat</button>
+        <button class="btn-sm btn-ghost" data-action="showVillageScreen">📺 Écran du village</button>
       </div>`;
   } else if (stage === 'captainDecides') {
     content = `
@@ -1540,6 +1758,89 @@ function renderBuildingsReminder() {
       }).join('')}
       <p class="muted" style="margin-top:8px">Appliquez les effets selon votre livret de règles.</p>
     </details>`;
+}
+
+// ——— Historique & statistiques ———
+function renderStats() {
+  const h = loadHistory();
+  const agg = {};
+  h.forEach(g => g.players.forEach(p => {
+    const a = agg[p.name] || (agg[p.name] = { games: 0, wolf: 0, wins: 0 });
+    a.games++; if (p.wolf) a.wolf++; if (p.won) a.wins++;
+  }));
+  const rows = Object.entries(agg).sort((a, b) => b[1].games - a[1].games);
+  const WICON = { village: '🏡', loups: '🐺', amoureux: '💘', flute: '🪈', loup_blanc: '🌕', ange: '👼', personne: '💀' };
+  return `
+    <div class="topbar">
+      <button class="btn-sm btn-ghost" data-action="statsBack">← Accueil</button>
+      <span class="badge">📊 ${h.length} partie${h.length > 1 ? 's' : ''}</span>
+    </div>
+    <h2>📊 Statistiques des joueurs</h2>
+    <div class="panel" style="padding:10px 14px">
+      <div class="stats-row stats-head"><span>Joueur</span><span>Parties</span><span>🐺 Loup</span><span>🏆 Victoires</span></div>
+      ${rows.map(([name, a]) => `
+        <div class="stats-row">
+          <span><b>${esc(name)}</b>${a.wolf === 0 ? ' <span class="muted small">(jamais loup !)</span>' : ''}</span>
+          <span>${a.games}</span><span>${a.wolf}</span><span>${a.wins}</span>
+        </div>`).join('')}
+    </div>
+    <h2 style="margin-top:16px">📜 Parties passées</h2>
+    ${h.map((g, i) => {
+      const w = WINNER_INFO[g.winner] || { icon: '🏁', title: 'Fin de partie' };
+      return `
+      <details class="panel">
+        <summary>${w.icon} ${new Date(g.date).toLocaleDateString('fr-FR')} — ${w.title} <span class="muted small">(${g.players.length} joueurs, ${g.nights} nuit${g.nights > 1 ? 's' : ''})</span></summary>
+        ${g.players.map(p => `<div class="order-item"><span>${p.won ? '🏆' : p.alive ? '🙂' : '💀'}</span><span>${esc(p.name)} — ${roleById[p.roleId]?.icon || ''} ${roleById[p.roleId]?.name || ''}</span></div>`).join('')}
+        <button class="btn-sm" style="margin-top:8px" data-action="shareHistoryRecap" data-arg="${i}">📤 Partager le récit</button>
+      </details>`;
+    }).join('')}
+    <button class="btn-big btn-ghost" data-action="clearHistory">🗑️ Effacer l'historique</button>`;
+}
+
+// ——— Écran du village (affichage public, sans spoiler) ———
+function renderVillageScreen() {
+  const alive = alivePlayers();
+  const capitaine = S.players.find(p => p.capitaine && p.alive);
+  const timerKey = S.phase === 'day' && S.day?.stage === 'vote' ? 'vote' : 'debat';
+  const t = timers[timerKey];
+  const phaseLabel = S.phase === 'night' ? `🌙 Nuit ${S.nightNumber}` : S.phase === 'morning' ? '🌅 L’aube' : `☀️ Jour ${S.dayCount}`;
+  return `
+    <div class="village-screen">
+      <div class="vs-phase">${phaseLabel}</div>
+      ${S.phase === 'day' ? `
+        <div class="vs-timer" id="timerbig-${timerKey}">${t ? fmtTime(t.remaining) : '—'}</div>
+        <div class="vs-sub">${timerKey === 'vote' ? '🗳️ Vote en cours' : '💬 Débat du village'}</div>` : `
+        <div class="vs-timer" style="font-size:5rem">🌙</div>
+        <div class="vs-sub">Le village dort…</div>`}
+      ${capitaine ? `<div class="vs-cap">👑 Capitaine : <b>${esc(capitaine.name)}</b></div>` : ''}
+      <div class="vs-players">
+        ${S.players.map(p => `<span class="vs-p ${p.alive ? '' : 'vs-dead'}">${p.capitaine && p.alive ? '👑 ' : ''}${esc(p.name)}</span>`).join('')}
+      </div>
+      <div class="vs-count">${alive.length} villageois en vie</div>
+      <button class="btn-sm btn-ghost vs-exit" data-action="hideVillageScreen">✕ narrateur</button>
+    </div>`;
+}
+
+// ——— Cartes Événements ———
+function renderEventPanel() {
+  if (!S.eventsEnabled) return '';
+  const ev = S.flags.currentEvent ? eventById[S.flags.currentEvent] : null;
+  return `
+    <div class="panel ${ev ? 'panel-accent' : ''}">
+      ${ev ? `
+        <div class="row-between">
+          <h3 style="margin:0">🎴 Événement du jour</h3>
+          <button class="btn-sm btn-ghost" data-action="dismissEvent">✕</button>
+        </div>
+        <div class="event-card">
+          <span style="font-size:2rem">${ev.icon}</span>
+          <div><b>${ev.name}</b><br><span class="muted small">${ev.text}</span></div>
+        </div>` : `
+        <div class="row-between">
+          <span class="small muted">🎴 Cartes Événements activées — pimentez ce matin ?</span>
+          <button class="btn-sm" data-action="drawEvent">Tirer une carte</button>
+        </div>`}
+    </div>`;
 }
 
 // ——— Tableau des joueurs ———
@@ -1676,6 +1977,10 @@ function renderSettings() {
         <input type="number" id="set-debate" min="1" max="30" value="${Math.round(S.settings.debateSec / 60)}">
         <p class="small" style="margin-top:10px">🗳️ Durée du vote (secondes)</p>
         <input type="number" id="set-vote" min="10" max="600" step="10" value="${S.settings.voteSec}">
+        <div class="row-between" style="margin-top:14px">
+          <span>🔊 Ambiances sonores<br><span class="muted small">Hurlement la nuit, aube, cloche du vote</span></span>
+          <button class="btn-sm ${soundOn() ? 'btn-ok' : ''}" data-action="toggleSound">${soundOn() ? '🔊 Activées' : '🔇 Coupées'}</button>
+        </div>
         <button class="btn-primary btn-big" data-action="closeSettings">Enregistrer</button>
       </div>
     </div>`;
