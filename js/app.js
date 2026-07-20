@@ -138,6 +138,9 @@ const defaultState = () => ({
   players: [],               // {id, name, roleId, alive, capitaine, lover, charmed, noVote, camp?, infected}
   roleCounts: {},
   styleId: null,             // style de partie appliqué (repère visuel)
+  seatingDone: false,        // ordre de table confirmé (ou ignoré)
+  seatTemp: [],              // ids touchés dans l'ordre, sur l'écran de placement
+  afterSeating: false,       // enchaîner vers la distribution après le placement
   buildingsEnabled: false,   // extension « Le Village » (bâtiments)
   eventsEnabled: false,      // cartes Événements (inspirées Nouvelle Lune)
   historySaved: false,       // partie déjà archivée dans l'historique
@@ -582,16 +585,19 @@ const actions = {
     if (!name) return;
     S.players.push(makePlayer(name));
     input.value = '';
+    S.seatingDone = false;
     update();
     document.getElementById('newPlayerName')?.focus();
   },
   addFromRoster(name) {
     if (S.players.some(p => p.name === name)) return;
     S.players.push(makePlayer(name));
+    S.seatingDone = false;
     update();
   },
   addAllRoster() {
     loadRoster().forEach(n => { if (!S.players.some(p => p.name === n)) S.players.push(makePlayer(n)); });
+    S.seatingDone = false;
     update();
   },
   clearRoster() { askConfirm('Oublier tous les joueurs enregistrés ?', 'doClearRoster'); },
@@ -623,15 +629,23 @@ const actions = {
     toast('🔁 Dernière table rechargée — ajustez si besoin.');
     update();
   },
-  removePlayer(id) { S.players = S.players.filter(p => p.id !== +id); update(); },
-  movePlayer(arg) {
-    const [id, dir] = arg.split(':');
-    const i = S.players.findIndex(p => p.id === +id);
-    const j = i + (dir === 'up' ? -1 : 1);
-    if (i < 0 || j < 0 || j >= S.players.length) return;
-    [S.players[i], S.players[j]] = [S.players[j], S.players[i]];
+  removePlayer(id) { S.players = S.players.filter(p => p.id !== +id); S.seatingDone = false; update(); },
+
+  // ——— Ordre de table (placement en un tap par joueur) ———
+  toSeating(fromDeal) { S.screen = 'seating'; S.seatTemp = []; S.afterSeating = fromDeal === 'deal'; update(); },
+  seatTap(id) {
+    const i = S.seatTemp.indexOf(+id);
+    if (i >= 0) S.seatTemp.splice(i, 1); else S.seatTemp.push(+id);
     update();
   },
+  seatReset() { S.seatTemp = []; update(); },
+  seatValidate() {
+    if (S.seatTemp.length !== S.players.length) return;
+    S.players = S.seatTemp.map(id => byId(id));
+    S.seatingDone = true;
+    finishSeating();
+  },
+  seatSkip() { S.seatingDone = true; finishSeating(); },
   toRoles() {
     if (S.players.length < 4) { toast('Il faut au moins 4 joueurs.'); return; }
     if (!Object.keys(S.roleCounts).length) { S.roleCounts = suggestComposition(S.players.length); S.styleId = 'classique'; }
@@ -709,10 +723,10 @@ const actions = {
   toDeal() {
     const total = Object.values(S.roleCounts).reduce((a, b) => a + b, 0);
     if (total !== S.players.length) { toast(`Il faut exactement ${S.players.length} cartes (actuellement ${total}).`); return; }
-    dealCards();
-    if (S.buildingsEnabled) assignBuildings();
-    S.screen = 'deal'; S.dealMode = null; S.dealDone = []; S.dealShow = null; S.dealRevealed = false;
-    update();
+    // L'ordre de table n'est demandé que si un rôle utilise les voisins
+    const needsSeating = ['renard', 'montreur_ours', 'chevalier'].some(id => S.roleCounts[id]);
+    if (needsSeating && !S.seatingDone) { S.screen = 'seating'; S.seatTemp = []; S.afterSeating = true; update(); return; }
+    proceedToDeal();
   },
 
   // ——— Distribution ———
@@ -1021,6 +1035,18 @@ function finalizeVoteKill(id) {
   checkVictory();
 }
 
+function proceedToDeal() {
+  dealCards();
+  if (S.buildingsEnabled) assignBuildings();
+  S.screen = 'deal'; S.dealMode = null; S.dealDone = []; S.dealShow = null; S.dealRevealed = false;
+  update();
+}
+
+function finishSeating() {
+  if (S.afterSeating) { S.afterSeating = false; proceedToDeal(); }
+  else { S.screen = 'players'; update(); }
+}
+
 function dealCards() {
   const deck = [];
   Object.entries(S.roleCounts).forEach(([id, n]) => { for (let i = 0; i < n; i++) deck.push(id); });
@@ -1062,6 +1088,7 @@ function render() {
     case 'deal': html = renderDeal(); break;
     case 'game': html = renderGame(); break;
     case 'stats': html = renderStats(); break;
+    case 'seating': html = renderSeating(); break;
   }
   if (S.villageScreen && S.screen === 'game') html = renderVillageScreen();
   if (S.showSettings) html += renderSettings();
@@ -1122,7 +1149,7 @@ function renderPlayersSetup() {
       <span class="badge">Étape 1/3 — Joueurs</span>
     </div>
     <h2>👥 Les joueurs (${S.players.length})</h2>
-    <p class="muted small">Ajoutez les joueurs <b>dans l'ordre où ils sont assis</b> autour de la table (important pour le Renard, le Montreur d'Ours et le Chevalier).</p>
+    <p class="muted small">Ajoutez les joueurs dans n'importe quel ordre. Si un rôle utilise les voisins de table (Renard, Montreur d'Ours, Chevalier), l'app vous fera placer tout le monde en quelques taps juste avant la distribution.</p>
     <div class="row" style="margin:12px 0">
       <input type="text" id="newPlayerName" placeholder="Prénom du joueur…" autocomplete="off">
       <button class="btn-primary" data-action="addPlayer">＋</button>
@@ -1132,11 +1159,38 @@ function renderPlayersSetup() {
       <div class="player-row">
         <span class="num">${i + 1}.</span>
         <span class="name">${esc(p.name)}</span>
-        <button class="btn-sm btn-ghost" data-action="movePlayer" data-arg="${p.id}:up" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="btn-sm btn-ghost" data-action="movePlayer" data-arg="${p.id}:down" ${i === S.players.length - 1 ? 'disabled' : ''}>↓</button>
         <button class="btn-sm btn-ghost" data-action="removePlayer" data-arg="${p.id}">✕</button>
       </div>`).join('')}
+    ${S.players.length >= 3 ? `<button class="btn-big btn-ghost" data-action="toSeating">🪑 Ordre de table ${S.seatingDone ? '✅' : '(facultatif)'}</button>` : ''}
     ${S.players.length ? `<button class="btn-primary btn-big" data-action="toRoles">Choisir les personnages →</button>` : ''}
+  `;
+}
+
+// ——— Placement autour de la table : un tap par joueur, dans l'ordre ———
+function renderSeating() {
+  const n = S.players.length;
+  const done = S.seatTemp.length;
+  return `
+    <div class="topbar">
+      <button class="btn-sm btn-ghost" data-action="seatSkip">Passer (garder l'ordre actuel)</button>
+      <span class="badge">🪑 Ordre de table</span>
+    </div>
+    <h2>🪑 Qui est assis où ?</h2>
+    <div class="narrator-say">Touchez les prénoms <b>dans l'ordre des places</b>, en tournant dans le sens des aiguilles d'une montre. Commencez par n'importe qui.</div>
+    <p class="muted small">Utile uniquement pour les voisins de table : 🦊 Renard, 🐻 Montreur d'Ours, ⚔️ Chevalier. L'app calcule ensuite les voisinages toute seule.</p>
+    <div class="pick-list" style="margin-top:14px">
+      ${S.players.map(p => {
+        const idx = S.seatTemp.indexOf(p.id);
+        return `<button class="pick-btn seat-chip ${idx >= 0 ? 'picked' : ''}" data-action="seatTap" data-arg="${p.id}">
+          ${idx >= 0 ? `<span class="snum">${idx + 1}</span>` : ''}${esc(p.name)}
+        </button>`;
+      }).join('')}
+    </div>
+    <p class="muted small center">${done} / ${n} placés${done ? ' — retouchez un prénom pour le retirer' : ''}</p>
+    <div class="row">
+      <button class="btn-ghost" data-action="seatReset">↺ Recommencer</button>
+      <button class="btn-primary grow" data-action="seatValidate" ${done === n ? '' : 'disabled'}>✅ Valider l'ordre</button>
+    </div>
   `;
 }
 
@@ -1527,7 +1581,7 @@ function renderNight() {
           ${holder ? `<span class="muted small">Joueur : ${esc(holder.name)}</span>` : ''}
         </div>
       </div>
-      <div class="narrator-say">🗣️ « ${step.say} »</div>
+      <div class="narrator-say">🗣️ « ${step.say} »${nightCloseLine(step)}</div>
       ${renderRoleBrief(step)}
       ${step.help ? `<p class="muted small">💡 ${step.help}</p>` : ''}
       ${body}
@@ -1540,6 +1594,48 @@ function renderNight() {
       </div>
     </div>
     ${renderNightOrderPreview()}`;
+}
+
+// Formule de fin de tour à prononcer avant d'appeler le rôle suivant.
+function nightCloseLine(step) {
+  if (['intro', 'fin'].includes(step.key)) return '';
+  let line;
+  if (step.key === 'loups') line = 'Loups-Garous, rendormez-vous.';
+  else if (step.key === 'freres') line = 'Les Trois Frères, rendormez-vous.';
+  else if (step.key === 'soeurs') line = 'Les Deux Sœurs, rendormez-vous.';
+  else if (step.key === 'cupidon') line = 'Cupidon, rendors-toi. Amoureux, ouvrez les yeux, reconnaissez-vous… et rendormez-vous.';
+  else if (step.key === 'flute') line = 'Joueur de Flûte, rendors-toi. Joueurs charmés, réveillez-vous, reconnaissez-vous… et rendormez-vous.';
+  else {
+    const role = roleById[step.roleId];
+    if (!role) return '';
+    line = `${role.name}, rendors-toi.`;
+  }
+  return `<div class="say-close">…une fois son action faite : « ${line} »</div>`;
+}
+
+// Ce que le narrateur doit dire à voix haute pour les annonces
+// (morts de la nuit ou résultat du vote) — rédigé mot à mot.
+function announceScript(context) {
+  const lines = [];
+  if (context === 'morning') {
+    lines.push('Il fait jour, tout Thiercelieux se réveille… sauf peut-être certains.');
+    if (!S.announce.deaths.length) lines.push('Cette nuit, personne n’est mort ! Le village peut souffler.');
+  }
+  S.announce.deaths.forEach(d => {
+    const p = byId(d.id); const r = roleById[p.roleId];
+    if (context === 'morning') lines.push(`Cette nuit, ${p.name} a été ${CAUSE_LABEL[d.cause]}. Sa carte est révélée : ${p.name} était ${r.name} !`);
+    else lines.push(`Le village a désigné ${p.name}. Sa carte est révélée : ${p.name} était ${r.name} !`);
+  });
+  if (context === 'vote' && !S.announce.deaths.length) lines.push('Personne n’est éliminé ce tour-ci. La méfiance grandit…');
+  return `<div class="narrator-say">🗣️ À dire au village :${lines.map(l => `<p style="margin:.35rem 0 0">« ${l} »</p>`).join('')}</div>`;
+}
+
+// Phrase à dire pour les enchaînements (Chasseur, Capitaine…).
+function promptSay(q) {
+  const name = q.playerId != null ? byId(q.playerId)?.name : '';
+  if (q.type === 'chasseur') return `<div class="narrator-say">🗣️ « ${esc(name)} était le Chasseur ! Dans un dernier souffle, il arme son fusil… ${esc(name)}, qui abats-tu ? »</div>`;
+  if (q.type === 'capitaine') return `<div class="narrator-say">🗣️ « ${esc(name)} était notre Capitaine. Avant de nous quitter, il désigne son successeur. »</div>`;
+  return ''; // chevalier & infos : consignes secrètes, rien à annoncer
 }
 
 // Encart « objectif & pouvoir » du rôle appelé, pour que le narrateur
@@ -1598,10 +1694,10 @@ function renderMorning() {
       prompt = `<div class="panel panel-accent"><p>${q.text}</p>
         <button class="btn-primary btn-big" data-action="promptDismiss">Compris →</button></div>`;
     } else if (q.type === 'capitaine') {
-      prompt = `<div class="panel panel-accent"><p>${q.text}</p>${promptPickButtons('promptPick')}
+      prompt = `<div class="panel panel-accent">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}
         <button class="btn-sm btn-ghost" data-action="promptSkip">Pas de successeur</button></div>`;
     } else if (q.type === 'chasseur') {
-      prompt = `<div class="panel panel-danger"><p>${q.text}</p>${promptPickButtons('promptPick')}
+      prompt = `<div class="panel panel-danger">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}
         <button class="btn-sm btn-ghost" data-action="promptSkip">Il ne tire pas</button></div>`;
     } else if (q.type === 'chevalier') {
       const wolves = alivePlayers().filter(isWolfSide);
@@ -1614,13 +1710,14 @@ function renderMorning() {
   const oursNote = renderOursNote();
   return `
     <h2>🌅 L'aube se lève sur Thiercelieux</h2>
+    ${announceScript('morning')}
     ${deaths.length
       ? deaths.map(d => {
           const p = byId(d.id); const r = roleById[p.roleId];
           return `<div class="death-item"><span style="font-size:1.4rem">💀</span>
             <div><b>${esc(p.name)}</b> — ${CAUSE_LABEL[d.cause]}<br><span class="muted small">Révélez sa carte : ${r.icon} ${r.name}</span></div></div>`;
         }).join('')
-      : `<div class="no-death">🌞 Aucune mort cette nuit ! Annoncez la bonne nouvelle.</div>`}
+      : `<div class="no-death">🌞 Aucune mort cette nuit !</div>`}
     ${prompt}
     ${!q ? `
       ${oursNote}
@@ -1722,13 +1819,14 @@ function renderDay() {
     let prompt = '';
     if (q) {
       if (q.type === 'info') prompt = `<div class="panel panel-accent"><p>${q.text}</p><button class="btn-primary btn-big" data-action="promptDismiss">Compris →</button></div>`;
-      else if (q.type === 'capitaine') prompt = `<div class="panel panel-accent"><p>${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Pas de successeur</button></div>`;
-      else if (q.type === 'chasseur') prompt = `<div class="panel panel-danger"><p>${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Il ne tire pas</button></div>`;
+      else if (q.type === 'capitaine') prompt = `<div class="panel panel-accent">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Pas de successeur</button></div>`;
+      else if (q.type === 'chasseur') prompt = `<div class="panel panel-danger">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Il ne tire pas</button></div>`;
       else if (q.type === 'chevalier') prompt = `<div class="panel panel-danger"><p>${q.text}</p><div class="pick-list">${alivePlayers().filter(isWolfSide).map(p => `<button class="pick-btn" data-action="promptPick" data-arg="${p.id}">${esc(p.name)}</button>`).join('')}</div><button class="btn-sm btn-ghost" data-action="promptSkip">Aucun loup</button></div>`;
     }
     const jugeAvailable = playerWithRole('juge') && !S.flags.jugeUsed && !S.flags.ancienPowersLost;
     content = `
       <h2>📣 Résultat du vote</h2>
+      ${announceScript('vote')}
       ${S.announce.deaths.length
         ? S.announce.deaths.map(d => {
             const p = byId(d.id); const r = roleById[p.roleId];
