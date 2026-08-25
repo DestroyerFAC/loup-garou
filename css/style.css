@@ -295,7 +295,10 @@ input::placeholder { color: #6e6596; }
 }
 .style-btn .sicon { font-size: 1.5rem; }
 .style-btn .sname { font-family: var(--font-display); font-weight: 700; letter-spacing: .03em; }
-.style-btn .sdesc { color: var(--muted); font-size: .74rem; line-height: 1.35; }
+.style-btn .sdesc {
+  color: var(--muted); font-size: .72rem; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
 .style-btn.active {
   border-color: rgba(233, 182, 77, .65);
   background: linear-gradient(150deg, var(--card3), var(--bg2) 70%);
@@ -323,8 +326,8 @@ input::placeholder { color: #6e6596; }
 
 /* ——— Nuit : étapes ——— */
 .step-bar {
-  height: 4px; border-radius: 4px; background: var(--bg2);
-  margin: -4px 0 12px; overflow: hidden;
+  height: 5px; border-radius: 5px; background: var(--bg2);
+  margin: 0 0 2px; overflow: hidden;
 }
 .step-bar i {
   display: block; height: 100%; border-radius: 4px;
@@ -342,20 +345,81 @@ input::placeholder { color: #6e6596; }
   box-shadow: inset 0 0 18px rgba(4, 2, 14, .5), var(--shadow-soft);
 }
 .step-header h2 { margin: 0; }
-.step-progress {
-  color: var(--muted); font-size: .74rem; margin-bottom: 8px;
-  text-transform: uppercase; letter-spacing: .12em;
-}
 .narrator-say {
   position: relative;
   background: var(--accent-soft); border-left: 3px solid var(--accent);
-  padding: 12px 14px 12px 16px; border-radius: 0 12px 12px 0; margin: 12px 0;
-  font-style: italic; font-size: 1.02rem;
+  padding: 15px 16px 15px 18px; border-radius: 0 14px 14px 0; margin: 14px 0;
+  font-size: 1.15rem; line-height: 1.5; color: #fff6e2;
 }
-.narrator-say .say-close {
-  margin-top: 8px; padding-top: 7px;
-  border-top: 1px dashed rgba(233, 182, 77, .35);
-  font-size: .86rem; color: var(--muted);
+/* Phrase de clôture : discrète, juste avant le bouton Suivant */
+.say-then {
+  margin: 12px 0 0; padding: 9px 12px;
+  border: 1px dashed var(--border); border-radius: 10px;
+  font-size: .88rem; color: var(--muted);
+}
+.say-then b { color: var(--text); font-weight: 600; }
+
+.say-label {
+  display: block; margin-bottom: 4px;
+  font-size: .72rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent); font-weight: 700;
+}
+
+/* But du rôle appelé : une ligne, toujours visible */
+.role-goal {
+  margin: 12px 0 0; padding: 10px 12px;
+  background: var(--bg2); border-radius: 10px;
+  font-size: .9rem;
+}
+.role-goal b { color: var(--accent); font-weight: 700; }
+
+/* Détail du pouvoir : replié par défaut */
+.step-info { margin: 8px 0 0; }
+.step-info summary { font-size: .88rem; color: var(--muted); font-weight: 600; }
+.step-info p { font-size: .88rem; color: var(--muted); margin: .35rem 0 0; }
+
+.step-sub {
+  color: var(--muted); font-size: .78rem;
+  text-transform: uppercase; letter-spacing: .08em;
+}
+
+/* Titre de section dans les écrans de préparation */
+.section-title {
+  margin: 20px 0 8px; color: var(--text);
+  font-family: var(--font-display); font-size: 1rem;
+  letter-spacing: .04em; text-transform: none;
+}
+
+/* Ligne compacte : composition choisie */
+.role-line {
+  display: flex; gap: 11px; align-items: center; position: relative;
+  background: var(--card2); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 9px 10px 9px 15px; margin: 7px 0;
+  box-shadow: var(--shadow-soft); overflow: hidden;
+}
+.role-line::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--border);
+}
+.role-line.is-loups::before { background: var(--wolf); }
+.role-line.is-village::before { background: var(--village); }
+.role-line.is-solo::before { background: var(--solo); }
+.role-line .icon { font-size: 1.5rem; width: 34px; text-align: center; flex-shrink: 0; }
+.role-line .info { flex: 1; min-width: 0; }
+.role-line .rname { font-weight: 700; font-size: .95rem; }
+.role-line .rshort { color: var(--muted); font-size: .78rem; }
+.role-line .btn-round { width: 36px; height: 36px; font-size: 1.1rem; }
+.role-line .count {
+  font-family: var(--font-display); font-weight: 700; font-size: 1.1rem;
+  min-width: 20px; text-align: center; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.opt-row { padding: 10px 0; border-top: 1px dashed var(--border-soft); gap: 12px; }
+.opt-row:first-of-type { border-top: none; }
+.pill-on {
+  font-size: .7rem; font-weight: 700; padding: 2px 8px; border-radius: 99px;
+  background: rgba(76, 197, 132, .18); color: var(--ok);
 }
 .seat-chip { position: relative; }
 .seat-chip .snum {
@@ -365,18 +429,6 @@ input::placeholder { color: #6e6596; }
   font-family: var(--font-display); font-size: .75rem; font-weight: 700;
 }
 .seat-chip.picked .snum { background: rgba(42, 28, 4, .85); }
-
-.role-brief {
-  background: var(--bg2); border: 1px solid var(--border-soft);
-  border-radius: 12px; padding: 11px 13px; margin: 10px 0;
-  font-size: .88rem;
-}
-.role-brief .rb-head {
-  font-family: var(--font-display); font-weight: 700; letter-spacing: .03em;
-  margin-bottom: 4px;
-}
-.role-brief p { margin: .25rem 0; color: var(--muted); }
-.role-brief p b { color: var(--text); font-weight: 600; }
 
 .pick-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .pick-btn {
@@ -453,8 +505,9 @@ input::placeholder { color: #6e6596; }
 .tab-btn .ticon { display: block; font-size: 1.3rem; margin-bottom: 1px; }
 
 /* ——— Morts / annonces ——— */
+.death-item .dicon { font-size: 1.3rem; flex-shrink: 0; }
 .death-item {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 11px;
   background: var(--danger-soft); border: 1px solid rgba(226, 85, 99, .4);
   border-left: 4px solid var(--danger);
   border-radius: 12px; padding: 11px 13px; margin: 8px 0;

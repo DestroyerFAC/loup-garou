@@ -1137,7 +1137,7 @@ function renderHome() {
       <button class="btn-big ${hasGame || last?.players?.length ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
       ${loadHistory().length ? `<button class="btn-big btn-ghost" data-action="toStats">📊 Historique & statistiques</button>` : ''}
       <div class="spacer"></div>
-      <p class="muted small">L'app guide le narrateur : ordre d'appel de la nuit,<br>morts automatiques, minuteurs de débat et de vote.</p>
+      <p class="muted small">L'app vous souffle quoi dire, qui appeler,<br>et compte les morts à votre place.</p>
     </div>`;
 }
 
@@ -1149,7 +1149,7 @@ function renderPlayersSetup() {
       <span class="badge">Étape 1/3 — Joueurs</span>
     </div>
     <h2>👥 Les joueurs (${S.players.length})</h2>
-    <p class="muted small">Ajoutez les joueurs dans n'importe quel ordre. Si un rôle utilise les voisins de table (Renard, Montreur d'Ours, Chevalier), l'app vous fera placer tout le monde en quelques taps juste avant la distribution.</p>
+    <p class="muted small">Dans n'importe quel ordre — si un rôle a besoin des voisins de table, l'app vous le demandera au bon moment.</p>
     <div class="row" style="margin:12px 0">
       <input type="text" id="newPlayerName" placeholder="Prénom du joueur…" autocomplete="off">
       <button class="btn-primary" data-action="addPlayer">＋</button>
@@ -1218,15 +1218,23 @@ function renderRosterChips() {
 }
 
 // ——— Rôles (setup) ———
+// Écran court : une ambiance, la composition obtenue, et le catalogue
+// des 30 personnages seulement pour qui veut ajuster carte par carte.
 function renderRolesSetup() {
   const total = Object.values(S.roleCounts).reduce((a, b) => a + b, 0);
   const n = S.players.length;
   const ok = total === n;
+  const chosen = Object.entries(S.roleCounts).filter(([, c]) => c > 0);
   const groups = [
     ['🐺 Loups-Garous', ROLES.filter(r => r.camp === 'loups')],
     ['🏡 Village', ROLES.filter(r => r.camp === 'village')],
     ['🎭 Solitaires', ROLES.filter(r => r.camp === 'solo')],
   ];
+  const stepper = (r, c) => `
+    <button class="btn-round btn-ghost" data-action="roleDec" data-arg="${r.id}" ${c ? '' : 'disabled'}>−</button>
+    <span class="count">${c}</span>
+    <button class="btn-round" data-action="roleInc" data-arg="${r.id}" ${c >= r.max ? 'disabled' : ''}>＋</button>`;
+
   return `
     <div class="topbar">
       <button class="btn-sm btn-ghost" data-action="backToPlayers">← Joueurs</button>
@@ -1234,55 +1242,71 @@ function renderRolesSetup() {
     </div>
     <div class="counter-bar">
       <span>Cartes : <span class="${ok ? 'ok' : 'ko'}">${total} / ${n}</span></span>
-      <button class="btn-sm btn-ghost" data-action="roleClear">Vider</button>
+      <span class="small ${ok ? 'ok' : 'muted'}">${ok ? '✓ prêt' : (total < n ? `il en manque ${n - total}` : `${total - n} en trop`)}</span>
     </div>
-    <div class="panel">
-      <h3 style="margin-top:0">🎛️ Style de partie</h3>
-      <p class="muted small">Même table, ambiances différentes : touchez un style pour générer une composition — puis ajustez carte par carte si vous voulez.</p>
-      <div class="style-grid">
-        ${GAME_STYLES.map(s => `
-          <button class="style-btn ${S.styleId === s.id ? 'active' : ''}" data-action="applyStyle" data-arg="${s.id}">
-            <span class="sicon">${s.icon}</span>
-            <span class="sname">${s.name}</span>
-            <span class="sdesc">${s.desc}</span>
-          </button>`).join('')}
-      </div>
+
+    <h3 class="section-title">1 · Choisissez une ambiance</h3>
+    <div class="style-grid">
+      ${GAME_STYLES.map(g => `
+        <button class="style-btn ${S.styleId === g.id ? 'active' : ''}" data-action="applyStyle" data-arg="${g.id}">
+          <span class="sicon">${g.icon}</span>
+          <span class="sname">${g.name}</span>
+          <span class="sdesc">${g.desc}</span>
+        </button>`).join('')}
     </div>
-    ${groups.map(([title, roles]) => `
-      <h3 style="margin-top:14px">${title}</h3>
-      ${roles.map(r => {
-        const c = S.roleCounts[r.id] || 0;
-        return `
-        <div class="role-card is-${r.camp} ${c ? 'selected' : ''}">
-          <span class="icon">${r.icon}</span>
-          <div class="info">
-            <div class="rname">${r.name}${r.pair ? ` <span class="muted small">(×${r.pair})</span>` : ''}</div>
-            <div class="rshort">${r.short}</div>
-          </div>
-          <button class="btn-round btn-ghost" data-action="roleDec" data-arg="${r.id}" ${c ? '' : 'disabled'}>−</button>
-          <span class="count">${c}</span>
-          <button class="btn-round" data-action="roleInc" data-arg="${r.id}" ${c >= r.max ? 'disabled' : ''}>＋</button>
-        </div>`;
-      }).join('')}
-    `).join('')}
-    <div class="panel ${S.buildingsEnabled ? 'panel-accent' : ''}">
-      <div class="row-between">
-        <div>
-          <b>🏘️ Extension « Le Village »</b><br>
-          <span class="muted small">Chaque joueur reçoit en plus un bâtiment visible : Châtelain, Bailli, Tavernier, Barbier, Boulanger, Institutrice, Rebouteux, Confesseur — les autres sont Fermiers.</span>
+
+    <h3 class="section-title">2 · Votre composition</h3>
+    ${chosen.length ? chosen.map(([id, c]) => {
+      const r = roleById[id];
+      return `
+      <div class="role-line is-${r.camp}">
+        <span class="icon">${r.icon}</span>
+        <div class="info">
+          <div class="rname">${r.name}</div>
+          <div class="rshort">${r.short}</div>
         </div>
-        <button class="${S.buildingsEnabled ? 'btn-ok' : ''}" data-action="toggleBuildings">${S.buildingsEnabled ? '✅ Activée' : 'Activer'}</button>
+        ${stepper(r, c)}
+      </div>`;
+    }).join('') : '<p class="muted small">Touchez une ambiance ci-dessus — ou ajoutez les personnages un par un juste en dessous.</p>'}
+    ${chosen.length ? '<button class="btn-sm btn-ghost" data-action="roleClear">Tout vider</button>' : ''}
+
+    <details class="panel">
+      <summary>➕ Ajouter d'autres personnages <span class="muted small">(les 30 cartes)</span></summary>
+      ${groups.map(([title, roles]) => `
+        <h3 style="margin-top:12px">${title}</h3>
+        ${roles.map(r => {
+          const c = S.roleCounts[r.id] || 0;
+          return `
+          <div class="role-card is-${r.camp} ${c ? 'selected' : ''}">
+            <span class="icon">${r.icon}</span>
+            <div class="info">
+              <div class="rname">${r.name}${r.pair ? ` <span class="muted small">(×${r.pair})</span>` : ''}</div>
+              <div class="rshort">${r.short}</div>
+            </div>
+            ${stepper(r, c)}
+          </div>`;
+        }).join('')}
+      `).join('')}
+    </details>
+
+    <details class="panel">
+      <summary>🎲 Extensions ${S.buildingsEnabled || S.eventsEnabled ? '<span class="pill-on">actives</span>' : '<span class="muted small">(facultatif)</span>'}</summary>
+      <div class="row-between opt-row">
+        <div>
+          <b>🏘️ Le Village</b><br>
+          <span class="muted small">Chaque joueur reçoit aussi un bâtiment visible : Châtelain, Bailli, Tavernier, Barbier… les autres sont Fermiers.</span>
+        </div>
+        <button class="btn-sm ${S.buildingsEnabled ? 'btn-ok' : ''}" data-action="toggleBuildings">${S.buildingsEnabled ? '✅ Oui' : 'Activer'}</button>
       </div>
-    </div>
-    <div class="panel ${S.eventsEnabled ? 'panel-accent' : ''}">
-      <div class="row-between">
+      <div class="row-between opt-row">
         <div>
           <b>🎴 Cartes Événements</b><br>
-          <span class="muted small">Inspirées de la Nouvelle Lune : certains matins, tirez une carte qui bouscule le village (vote à l'aveugle, couvre-feu, vœu de silence…).</span>
+          <span class="muted small">Certains matins, une carte bouscule le village : vote à l'aveugle, couvre-feu, vœu de silence…</span>
         </div>
-        <button class="${S.eventsEnabled ? 'btn-ok' : ''}" data-action="toggleEvents">${S.eventsEnabled ? '✅ Activées' : 'Activer'}</button>
+        <button class="btn-sm ${S.eventsEnabled ? 'btn-ok' : ''}" data-action="toggleEvents">${S.eventsEnabled ? '✅ Oui' : 'Activer'}</button>
       </div>
-    </div>
+    </details>
+
     <button class="btn-primary btn-big" data-action="toDeal" ${ok ? '' : 'disabled'}>Distribuer les cartes →</button>
     <div class="spacer"></div>
   `;
@@ -1570,23 +1594,24 @@ function renderNight() {
   }
 
   const isLast = step.ui === 'fin';
+  const pct = Math.round(((S.night.idx + 1) / S.night.steps.length) * 100);
+  // L'ordre à l'écran suit les gestes réels : phrase à dire → action → phrase de clôture.
   return `
+    <div class="step-bar"><i style="width:${pct}%"></i></div>
     <div class="panel panel-accent">
-      <div class="step-bar"><i style="width:${Math.round(((S.night.idx + 1) / S.night.steps.length) * 100)}%"></i></div>
-      <div class="step-progress">Étape ${S.night.idx + 1} / ${S.night.steps.length}</div>
       <div class="step-header">
         <span class="icon">${icon}</span>
         <div>
           <h2 style="margin:0">${title}</h2>
-          ${holder ? `<span class="muted small">Joueur : ${esc(holder.name)}</span>` : ''}
+          <span class="step-sub">${holder ? `${esc(holder.name)} · ` : ''}étape ${S.night.idx + 1}/${S.night.steps.length}</span>
         </div>
       </div>
-      <div class="narrator-say">🗣️ « ${step.say} »${nightCloseLine(step)}</div>
-      ${renderRoleBrief(step)}
-      ${step.help ? `<p class="muted small">💡 ${step.help}</p>` : ''}
+      <div class="narrator-say">« ${step.say} »</div>
       ${body}
+      ${renderStepInfo(step)}
+      ${nightCloseLine(step)}
       <div class="row" style="margin-top:14px">
-        <button class="btn-ghost" data-action="nightPrev" ${S.night.idx === 0 ? 'disabled' : ''}>← Précédent</button>
+        <button class="btn-ghost" data-action="nightPrev" ${S.night.idx === 0 ? 'disabled' : ''}>←</button>
         <div class="grow"></div>
         ${isLast
           ? `<button class="btn-primary" data-action="finishNight">🌅 Le village se réveille</button>`
@@ -1610,7 +1635,7 @@ function nightCloseLine(step) {
     if (!role) return '';
     line = `${role.name}, rendors-toi.`;
   }
-  return `<div class="say-close">…une fois son action faite : « ${line} »</div>`;
+  return `<div class="say-then">Puis, pour clore : <b>« ${line} »</b></div>`;
 }
 
 // Ce que le narrateur doit dire à voix haute pour les annonces
@@ -1627,28 +1652,29 @@ function announceScript(context) {
     else lines.push(`Le village a désigné ${p.name}. Sa carte est révélée : ${p.name} était ${r.name} !`);
   });
   if (context === 'vote' && !S.announce.deaths.length) lines.push('Personne n’est éliminé ce tour-ci. La méfiance grandit…');
-  return `<div class="narrator-say">🗣️ À dire au village :${lines.map(l => `<p style="margin:.35rem 0 0">« ${l} »</p>`).join('')}</div>`;
+  return `<div class="narrator-say"><span class="say-label">À dire au village</span>${lines.map(l => `<p style="margin:.35rem 0 0">« ${l} »</p>`).join('')}</div>`;
 }
 
 // Phrase à dire pour les enchaînements (Chasseur, Capitaine…).
 function promptSay(q) {
   const name = q.playerId != null ? byId(q.playerId)?.name : '';
-  if (q.type === 'chasseur') return `<div class="narrator-say">🗣️ « ${esc(name)} était le Chasseur ! Dans un dernier souffle, il arme son fusil… ${esc(name)}, qui abats-tu ? »</div>`;
-  if (q.type === 'capitaine') return `<div class="narrator-say">🗣️ « ${esc(name)} était notre Capitaine. Avant de nous quitter, il désigne son successeur. »</div>`;
+  if (q.type === 'chasseur') return `<div class="narrator-say">« ${esc(name)} était le Chasseur ! Dans un dernier souffle, il arme son fusil… ${esc(name)}, qui abats-tu ? »</div>`;
+  if (q.type === 'capitaine') return `<div class="narrator-say">« ${esc(name)} était notre Capitaine. Avant de nous quitter, il désigne son successeur. »</div>`;
   return ''; // chevalier & infos : consignes secrètes, rien à annoncer
 }
 
-// Encart « objectif & pouvoir » du rôle appelé, pour que le narrateur
-// puisse expliquer le personnage au joueur en un coup d'œil.
-function renderRoleBrief(step) {
+// Rappel du rôle appelé : le but tient sur une ligne toujours visible,
+// le pouvoir détaillé et le conseil au narrateur se déplient à la demande.
+function renderStepInfo(step) {
   const role = roleById[step.briefRoleId || step.roleId];
-  if (!role) return '';
+  if (!role) return step.help ? `<details class="step-info"><summary>💡 Conseil au narrateur</summary><p>${step.help}</p></details>` : '';
   return `
-    <div class="role-brief">
-      <div class="rb-head">${role.icon} ${role.name} <span class="camp-tag camp-${role.camp}">${CAMP_LABEL[role.camp]}</span></div>
-      <p><b>🎯 Objectif :</b> ${roleGoal(role)}</p>
-      <p><b>⚙️ Pouvoir :</b> ${role.desc}</p>
-    </div>`;
+    <div class="role-goal">🎯 <b>Son but :</b> ${roleGoal(role)}</div>
+    <details class="step-info">
+      <summary>${role.icon} Pouvoir du ${role.name}${step.help ? ' & conseil' : ''}</summary>
+      <p>${role.desc}</p>
+      ${step.help ? `<p class="muted">💡 ${step.help}</p>` : ''}
+    </details>`;
 }
 
 function renderNightRecap() {
@@ -1714,8 +1740,8 @@ function renderMorning() {
     ${deaths.length
       ? deaths.map(d => {
           const p = byId(d.id); const r = roleById[p.roleId];
-          return `<div class="death-item"><span style="font-size:1.4rem">💀</span>
-            <div><b>${esc(p.name)}</b> — ${CAUSE_LABEL[d.cause]}<br><span class="muted small">Révélez sa carte : ${r.icon} ${r.name}</span></div></div>`;
+          return `<div class="death-item"><span class="dicon">💀</span>
+            <div><b>${esc(p.name)}</b> <span class="muted small">— révélez sa carte :</span> ${r.icon} <b>${r.name}</b></div></div>`;
         }).join('')
       : `<div class="no-death">🌞 Aucune mort cette nuit !</div>`}
     ${prompt}
@@ -1759,7 +1785,7 @@ function renderDay() {
     content = `
       <div class="panel panel-accent">
         <h2>👑 Élection du Capitaine</h2>
-        <div class="narrator-say">🗣️ « Le village doit élire son Capitaine. Sa voix comptera double et il tranchera les égalités. Faites vos campagnes, puis votez à main levée ! »</div>
+        <div class="narrator-say">« Le village doit élire son Capitaine. Sa voix comptera double et il tranchera les égalités. Faites vos campagnes, puis votez à main levée ! »</div>
         ${promptPickButtons('electCaptain')}
         <button class="btn-sm btn-ghost" data-action="skipCaptain">Jouer sans Capitaine</button>
       </div>`;
@@ -1768,7 +1794,7 @@ function renderDay() {
     content = `
       <div class="panel panel-accent">
         <h2>💬 Débat du village</h2>
-        <div class="narrator-say">🗣️ « Le débat est ouvert ! Qui accusez-vous ? »</div>
+        <div class="narrator-say">« Le débat est ouvert ! Qui accusez-vous ? »</div>
         ${capitaine ? `<p class="small">👑 Capitaine : <b>${esc(capitaine.name)}</b> (voix double). C'est lui qui distribue la parole.</p>` : ''}
         ${S.flags.corbeauTarget != null && byId(S.flags.corbeauTarget)?.alive ? `<p class="small">🐦‍⬛ Rappel : <b>${esc(byId(S.flags.corbeauTarget)?.name)}</b> part avec 2 voix contre lui/elle.</p>` : ''}
         ${S.players.some(p => p.noVote && p.alive) ? `<p class="small">🤡 Ne vote(nt) pas : ${S.players.filter(p => p.noVote && p.alive).map(p => esc(p.name)).join(', ')}</p>` : ''}
@@ -1782,7 +1808,7 @@ function renderDay() {
     content = `
       <div class="panel panel-accent">
         <h2>🗳️ Vote du village ${S.day.voteRound > 1 ? `<span class="badge">2e vote (Juge)</span>` : ''}</h2>
-        <div class="narrator-say">🗣️ « À mon signal, désignez tous du doigt le joueur que vous accusez… 3, 2, 1, votez ! »</div>
+        <div class="narrator-say">« À mon signal, désignez tous du doigt le joueur que vous accusez… 3, 2, 1, votez ! »</div>
         ${timerHTML('vote', S.settings.voteSec, 'Temps de vote')}
         <h3 style="margin-top:12px">Résultat : qui est désigné ?</h3>
         ${promptPickButtons('voteResult')}
@@ -1808,7 +1834,7 @@ function renderDay() {
       <div class="panel panel-accent">
         <h2>🫖 Servante Dévouée</h2>
         <p><b>${esc(dead?.name)}</b> va être éliminé(e). Avant de révéler sa carte, demandez :</p>
-        <div class="narrator-say">🗣️ « Quelqu'un souhaite-t-il se dévoiler ? »</div>
+        <div class="narrator-say">« Quelqu'un souhaite-t-il se dévoiler ? »</div>
         <p class="small muted">La Servante (${esc(servante?.name)}) peut prendre la carte de l'éliminé et jouer son rôle (sans le révéler).</p>
         <div class="grid2">
           <button class="btn-big" data-action="servanteChoice" data-arg="no">Non, révéler la carte</button>
@@ -1830,8 +1856,8 @@ function renderDay() {
       ${S.announce.deaths.length
         ? S.announce.deaths.map(d => {
             const p = byId(d.id); const r = roleById[p.roleId];
-            return `<div class="death-item"><span style="font-size:1.4rem">💀</span>
-              <div><b>${esc(p.name)}</b> — ${CAUSE_LABEL[d.cause]}<br><span class="muted small">Révélez sa carte : ${r.icon} ${r.name}</span></div></div>`;
+            return `<div class="death-item"><span class="dicon">💀</span>
+              <div><b>${esc(p.name)}</b> <span class="muted small">— révélez sa carte :</span> ${r.icon} <b>${r.name}</b></div></div>`;
           }).join('')
         : `<div class="no-death">Personne n'est éliminé ce tour-ci.</div>`}
       ${prompt}
