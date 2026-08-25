@@ -21,6 +21,7 @@ const ROLES = [
   },
   {
     id: 'loup_blanc', name: 'Loup Blanc', icon: '🌕', camp: 'solo', max: 1, ext: 'Personnages',
+    goal: 'Être le DERNIER survivant : il trahit même les loups.',
     short: 'Loup solitaire : doit rester le dernier survivant.',
     desc: "Se réveille avec les loups. Une nuit sur deux, il se réveille ensuite seul et peut dévorer un Loup-Garou. Il gagne s'il est le dernier survivant."
   },
@@ -88,6 +89,7 @@ const ROLES = [
   },
   {
     id: 'joueur_flute', name: 'Joueur de Flûte', icon: '🪈', camp: 'solo', max: 1, ext: 'Nouvelle Lune',
+    goal: 'Charmer tous les survivants pour gagner seul.',
     short: 'Charme 2 joueurs par nuit. Gagne si tous sont charmés.',
     desc: "Chaque nuit, il charme 2 joueurs (le narrateur les touche, ils se réveillent et se reconnaissent). Il gagne seul si tous les survivants sont charmés."
   },
@@ -103,11 +105,13 @@ const ROLES = [
   },
   {
     id: 'chien_loup', name: 'Chien-Loup', icon: '🐕', camp: 'village', max: 1, ext: 'Personnages',
+    goal: 'Suivant son choix de la première nuit : Village ou Loups.',
     short: 'Nuit 1 : choisit son camp, Village ou Loups.',
     desc: "La première nuit, il choisit secrètement son camp : simple villageois, ou Loup-Garou (il se réveillera alors chaque nuit avec eux)."
   },
   {
     id: 'enfant_sauvage', name: 'Enfant Sauvage', icon: '🐒', camp: 'village', max: 1, ext: 'Personnages',
+    goal: 'Village tant que son modèle est vivant ; Loups dès qu\'il meurt.',
     short: 'Choisit un modèle. Si le modèle meurt, il devient loup.',
     desc: "La première nuit, il choisit un joueur modèle. Tant que le modèle vit, il est villageois. Si le modèle meurt, il devient Loup-Garou et se réveille avec eux."
   },
@@ -143,6 +147,7 @@ const ROLES = [
   },
   {
     id: 'abominable_sectaire', name: 'Abominable Sectaire', icon: '🕯️', camp: 'solo', max: 1, ext: 'Personnages',
+    goal: 'Être le seul groupe survivant : éliminer toute l\'autre moitié du village.',
     short: 'Gagne si l’autre moitié du village est éliminée.',
     desc: "Le narrateur divise le village en 2 groupes visibles (ex. : d'un côté / de l'autre de la table). Le Sectaire gagne seul si tous les joueurs de l'autre groupe sont éliminés."
   },
@@ -153,6 +158,7 @@ const ROLES = [
   },
   {
     id: 'ange', name: 'Ange', icon: '👼', camp: 'solo', max: 1, ext: 'Personnages',
+    goal: 'Se faire éliminer au tout premier tour pour gagner seul.',
     short: 'Gagne s’il est éliminé au tout premier tour.',
     desc: "S'il est éliminé au premier vote du village (ou dévoré la première nuit), il gagne la partie seul. Sinon, il redevient simple villageois."
   },
@@ -160,27 +166,152 @@ const ROLES = [
 
 const roleById = Object.fromEntries(ROLES.map(r => [r.id, r]));
 
+// Objectif de victoire : celui du camp, sauf objectif propre au rôle.
+const CAMP_GOAL = {
+  village: 'Démasquer et éliminer tous les Loups-Garous.',
+  loups: 'Dévorer les villageois jusqu\'à contrôler le village, sans se faire démasquer.',
+  solo: 'Gagner seul, contre tous les autres.',
+};
+function roleGoal(role) { return role.goal || CAMP_GOAL[role.camp] || ''; }
+
 // Camps « effectifs » gérés dynamiquement par joueur (chien-loup, enfant sauvage, infection).
 const CAMP_LABEL = {
   village: 'Village', loups: 'Loups-Garous', solo: 'Solitaire',
 };
 
-// Suggestion de composition selon le nombre de joueurs.
-function suggestComposition(n) {
+// ——— Extension « Le Village » : les 9 bâtiments ———
+// Les bâtiments sont PUBLICS (posés devant les joueurs). L'app suit qui
+// possède quoi et le rappelle au narrateur ; appliquez les effets selon
+// votre livret de règles.
+const BUILDINGS = [
+  { id: 'chatelain', name: 'Le Châtelain', icon: '🏰', token: 'Blason',
+    short: 'Notable du village : il préside la place et pèse dans les débats.' },
+  { id: 'bailli', name: 'Le Bailli', icon: '🗝️', token: 'Double des clés',
+    short: 'Représentant de l’ordre : il encadre le scrutin du village.' },
+  { id: 'tavernier', name: 'Le Tavernier', icon: '🍺', token: 'Gobelet',
+    short: 'Il peut héberger un joueur à la taverne pour la nuit.' },
+  { id: 'barbier', name: 'Le Barbier', icon: '🪒', token: 'Rasoir',
+    short: 'Peut « raser de près » un client en plein jour — à ses risques.' },
+  { id: 'boulanger', name: 'Le Boulanger', icon: '🥖', token: 'Pain',
+    short: 'Chaque matin, il distribue le pain et rythme la vie du village.' },
+  { id: 'institutrice', name: 'L’Institutrice', icon: '🔔', token: 'Cloche',
+    short: 'Elle sonne la cloche et peut discipliner le vote d’un élève turbulent.' },
+  { id: 'rebouteux', name: 'Le Rebouteux', icon: '🧉', token: 'Mortier',
+    short: 'Guérisseur du village : il peut soigner une victime.' },
+  { id: 'confesseur', name: 'Le Confesseur', icon: '📿', token: 'Chapelet',
+    short: 'Il peut recevoir la confession d’un joueur et sonder son âme.' },
+  { id: 'fermier', name: 'Fermier', icon: '🐄', token: 'Vache', multi: true,
+    short: 'La force tranquille du village : sans pouvoir, mais nombreux.' },
+];
+const buildingById = Object.fromEntries(BUILDINGS.map(b => [b.id, b]));
+
+// ——— Cartes Événements (inspirées de la Nouvelle Lune) ———
+// Tirées au matin, à la discrétion du narrateur. Chaque carte donne une
+// consigne précise à annoncer au village.
+const EVENTS = [
+  { id: 'nuit_noire', icon: '🌑', name: 'Nuit noire',
+    text: 'Au prochain vote, le village votera les yeux fermés, au doigt levé : seul le narrateur compte les voix.' },
+  { id: 'pleine_lune_ev', icon: '🌕', name: 'Pleine lune',
+    text: 'La nuit prochaine, les Loups-Garous devront désigner leur victime sans aucune concertation : unanimité silencieuse, sinon pas de victime.' },
+  { id: 'couvre_feu', icon: '🕯️', name: 'Couvre-feu',
+    text: 'Pas de débat aujourd’hui : le vote a lieu immédiatement après les annonces du matin.' },
+  { id: 'offrande', icon: '🎁', name: 'Offrande au dieu Loup',
+    text: 'Le village désigne ensemble un joueur : il sera protégé des Loups-Garous la nuit prochaine.' },
+  { id: 'voeu_silence', icon: '🤐', name: 'Vœu de silence',
+    text: 'Interdiction de parler jusqu’au vote : le débat se fait uniquement par gestes. Celui qui parle reçoit 1 voix contre lui.' },
+  { id: 'grand_echange', icon: '🔄', name: 'Le grand déménagement',
+    text: 'Deux joueurs tirés au sort échangent leurs places autour de la table (les voisinages changent !).' },
+  { id: 'esprit_frappeur', icon: '👻', name: 'Esprit frappeur',
+    text: 'L’esprit d’un mort s’exprime : le narrateur révèle le rôle d’un joueur éliminé qui ne l’avait pas été.' },
+  { id: 'double_accusation', icon: '⚖️', name: 'Double accusation',
+    text: 'Au prochain vote, chaque joueur vote avec DEUX doigts pour deux accusés différents.' },
+  { id: 'reves_premonitoires', icon: '💭', name: 'Rêves prémonitoires',
+    text: 'Chaque joueur, à tour de rôle, raconte en une phrase le « rêve » qu’il a fait cette nuit (indice ou intox !).' },
+  { id: 'beuverie', icon: '🍺', name: 'Beuverie à la taverne',
+    text: 'Le village a trop bu : la nuit prochaine, tous les pouvoirs de nuit du village sont suspendus (les loups, eux, rôdent toujours).' },
+];
+const eventById = Object.fromEntries(EVENTS.map(e => [e.id, e]));
+
+// ——— Styles de partie ———
+// Un même nombre de joueurs, des ambiances différentes : chaque style
+// génère une composition distincte (loups + rôles prioritaires + villageois).
+
+function baseWolves(n) { return n >= 18 ? 4 : n >= 12 ? 3 : n >= 8 ? 2 : 1; }
+
+const GAME_STYLES = [
+  {
+    id: 'classique', name: 'Classique', icon: '🌙',
+    desc: 'La partie traditionnelle : pouvoirs emblématiques et équilibre éprouvé.',
+    priority: ['voyante', 'sorciere', 'chasseur', 'cupidon', 'petite_fille', 'salvateur', 'ancien', 'corbeau', 'montreur_ours', 'renard', 'idiot', 'bouc', 'deux_soeurs'],
+  },
+  {
+    id: 'decouverte', name: 'Découverte', icon: '🌱',
+    desc: 'Peu de pouvoirs, règles simples : idéale pour les nouveaux joueurs.',
+    priority: ['voyante', 'sorciere', 'chasseur', 'cupidon'],
+  },
+  {
+    id: 'enquete', name: 'Enquête', icon: '🔍',
+    desc: 'Beaucoup d’indices : Voyante, Renard, Ours, Petite Fille, Corbeau… aux villageois de recouper.',
+    priority: ['voyante', 'renard', 'montreur_ours', 'petite_fille', 'corbeau', 'sorciere', 'chasseur', 'salvateur', 'deux_soeurs', 'trois_freres'],
+  },
+  {
+    id: 'chaos', name: 'Chaos', icon: '🎭',
+    desc: 'Solitaires et coups de théâtre : Joueur de Flûte, Loup Blanc, Ange, Grand Méchant Loup…',
+    wolfTwist: 'grand_mechant_loup',
+    priority: ['joueur_flute', 'loup_blanc', 'sorciere', 'voyante', 'chasseur', 'comedien', 'juge', 'ange', 'bouc', 'idiot', 'corbeau'],
+  },
+  {
+    id: 'trahisons', name: 'Trahisons', icon: '🗡️',
+    desc: 'Camps mouvants : Chien-Loup, Enfant Sauvage, Infect Père des Loups, Sectaire, amoureux maudits…',
+    wolfTwist: 'infect_pere',
+    priority: ['chien_loup', 'enfant_sauvage', 'ange', 'abominable_sectaire', 'cupidon', 'voyante', 'sorciere', 'chasseur', 'servante', 'salvateur'],
+  },
+  {
+    id: 'surprise', name: 'Surprise', icon: '🎲',
+    desc: 'Composition aléatoire équilibrée — différente à chaque fois. Retentez votre chance !',
+    random: true,
+  },
+];
+const styleById = Object.fromEntries(GAME_STYLES.map(s => [s.id, s]));
+
+function composeStyle(styleId, n) {
+  const style = styleById[styleId] || GAME_STYLES[0];
   const c = {};
-  const add = (id, k = 1) => { c[id] = (c[id] || 0) + k; };
-  const wolves = n >= 18 ? 4 : n >= 12 ? 3 : n >= 8 ? 2 : 1;
-  add('loup', wolves);
-  add('voyante'); add('sorciere'); add('chasseur');
-  if (n >= 8) add('cupidon');
-  if (n >= 9) add('petite_fille');
-  if (n >= 10) add('salvateur');
-  if (n >= 11) add('ancien');
-  if (n >= 12) add('corbeau');
-  if (n >= 13) add('montreur_ours');
-  if (n >= 14) add('renard');
-  if (n >= 15) add('idiot');
-  const used = Object.values(c).reduce((a, b) => a + b, 0);
+  let used = 0;
+  const add = (id, k = 1) => { c[id] = (c[id] || 0) + k; used += k; };
+
+  // Les loups : le style peut remplacer un loup simple par un loup spécial.
+  const w = baseWolves(n);
+  if (style.wolfTwist && w >= 2) { add('loup', w - 1); add(style.wolfTwist); }
+  else add('loup', w);
+
+  // Rôles prioritaires du style (ou tirage aléatoire pour « Surprise »).
+  let priority = style.priority || [];
+  if (style.random) {
+    priority = ROLES
+      .filter(r => !['loup', 'villageois', 'voleur'].includes(r.id) && r.camp !== 'loups')
+      .map(r => r.id);
+    for (let i = priority.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [priority[i], priority[j]] = [priority[j], priority[i]];
+    }
+    // Une chance sur trois de corser les loups avec une variante.
+    if (w >= 2 && Math.random() < 1 / 3) {
+      c.loup--; used--;
+      add(Math.random() < .5 ? 'grand_mechant_loup' : 'infect_pere');
+    }
+  }
+  for (const id of priority) {
+    if (used >= n) break;
+    if (c[id]) continue;
+    const r = roleById[id];
+    const k = r.pair || 1;
+    if (used + k > n) continue;
+    add(id, k);
+  }
   if (n - used > 0) add('villageois', n - used);
   return c;
 }
+
+// Compatibilité : la suggestion par défaut est le style Classique.
+function suggestComposition(n) { return composeStyle('classique', n); }

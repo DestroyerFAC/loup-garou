@@ -2,7 +2,133 @@
 // Dépend de js/roles.js (chargé avant ce script).
 
 const STORAGE_KEY = 'loupgarou_state_v1';
+const ROSTER_KEY = 'loupgarou_roster_v1';   // noms des joueurs déjà vus
+const LAST_KEY = 'loupgarou_last_v1';       // dernière table (joueurs + composition)
+const HISTORY_KEY = 'loupgarou_history_v1'; // parties archivées (stats & récits)
 const $app = document.getElementById('app');
+
+// ——— PWA : app installable, utilisable hors ligne ———
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && window === window.top) {
+  navigator.serviceWorker.register('sw.js').catch(() => { /* hébergement sans SW */ });
+}
+
+// ——— Écran toujours allumé pendant la partie (Wake Lock) ———
+let wakeLock = null;
+async function updateWakeLock() {
+  const want = S.screen === 'game';
+  try {
+    if (want && !wakeLock && 'wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      await wakeLock.release(); wakeLock = null;
+    }
+  } catch (e) { /* refusé ou non supporté */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { wakeLock = null; updateWakeLock(); }
+});
+
+// ——— Mémoire des joueurs (persiste d'une partie à l'autre) ———
+function loadRoster() {
+  try { return JSON.parse(localStorage.getItem(ROSTER_KEY)) || []; } catch (e) { return []; }
+}
+function rememberPlayers(names) {
+  try {
+    const roster = loadRoster().filter(n => !names.includes(n));
+    localStorage.setItem(ROSTER_KEY, JSON.stringify([...names, ...roster].slice(0, 40)));
+  } catch (e) { /* stockage indisponible */ }
+}
+function loadLastSetup() {
+  try { return JSON.parse(localStorage.getItem(LAST_KEY)); } catch (e) { return null; }
+}
+function rememberLastSetup() {
+  try {
+    localStorage.setItem(LAST_KEY, JSON.stringify({
+      players: S.players.map(p => p.name),
+      roleCounts: S.roleCounts, styleId: S.styleId, buildingsEnabled: S.buildingsEnabled,
+    }));
+  } catch (e) { /* stockage indisponible */ }
+}
+function makePlayer(name) {
+  return { id: Date.now() + Math.floor(Math.random() * 100000), name, roleId: null, alive: true };
+}
+// ——— Historique des parties (stats & récits) ———
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch (e) { return []; }
+}
+function gameWinnerPredicate(winner) {
+  switch (winner) {
+    case 'village': return p => !isWolfSide(p) && roleById[p.roleId].camp !== 'solo';
+    case 'loups': return p => isWolfSide(p) && p.roleId !== 'loup_blanc';
+    case 'amoureux': return p => p.lover;
+    case 'flute': return p => p.roleId === 'joueur_flute';
+    case 'loup_blanc': return p => p.roleId === 'loup_blanc';
+    case 'ange': return p => p.roleId === 'ange';
+    default: return () => false;
+  }
+}
+function archiveGame() {
+  if (!S.winner || S.historySaved || S.winner === 'personne' && !S.players.length) return;
+  const won = gameWinnerPredicate(S.winner);
+  const entry = {
+    date: Date.now(), winner: S.winner, styleId: S.styleId,
+    days: S.dayCount, nights: S.nightNumber,
+    players: S.players.map(p => ({
+      name: p.name, roleId: p.roleId, wolf: isWolfSide(p), alive: p.alive, won: !!won(p),
+    })),
+    log: S.log.map(l => `${l.when} — ${l.msg}`),
+  };
+  try {
+    const h = loadHistory(); h.unshift(entry);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 50)));
+  } catch (e) { /* stockage indisponible */ }
+  S.historySaved = true;
+}
+
+// ——— Récit de la partie à partager ———
+function recapText(entry) {
+  const w = WINNER_INFO[entry.winner] || { icon: '🏁', title: 'Fin de partie' };
+  const d = new Date(entry.date);
+  const wolves = entry.players.filter(p => p.wolf).map(p => p.name);
+  const lines = [
+    `🐺 LOUP-GAROU — Partie du ${d.toLocaleDateString('fr-FR')} (${entry.players.length} joueurs)`,
+    `${w.icon} ${w.title}`,
+    `⏳ ${entry.nights} nuit${entry.nights > 1 ? 's' : ''}, ${entry.days} jour${entry.days > 1 ? 's' : ''}`,
+    '',
+    `Les loups étaient : ${wolves.join(', ') || '—'}`,
+    '',
+    '🎴 Les rôles :',
+    ...entry.players.map(p => `  ${p.won ? '🏆' : p.alive ? '🙂' : '💀'} ${p.name} — ${roleById[p.roleId]?.icon || ''} ${roleById[p.roleId]?.name || p.roleId}`),
+    '',
+    '📜 Chronique :',
+    ...entry.log.map(l => `  ${l}`),
+  ];
+  return lines.join('\n');
+}
+async function shareText(text) {
+  try {
+    if (navigator.share) { await navigator.share({ text }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('📋 Récit copié ! Collez-le dans votre discussion de groupe.');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('📋 Récit copié !'); } catch (e2) { toast('Impossible de copier automatiquement.'); }
+    ta.remove();
+  }
+}
+
+// Remet les joueurs à neuf (mêmes noms, tout état de partie effacé).
+function resetPlayersForNewGame() {
+  S.players.forEach(p => {
+    p.alive = true; p.roleId = null;
+    p.capitaine = false; p.lover = false; p.charmed = false; p.noVote = false; p.infected = false;
+    delete p.camp; delete p.building;
+  });
+}
 
 // ————————————————————————————— État —————————————————————————————
 const defaultState = () => ({
@@ -11,6 +137,14 @@ const defaultState = () => ({
   settings: { debateSec: 240, voteSec: 60 },
   players: [],               // {id, name, roleId, alive, capitaine, lover, charmed, noVote, camp?, infected}
   roleCounts: {},
+  styleId: null,             // style de partie appliqué (repère visuel)
+  seatingDone: false,        // ordre de table confirmé (ou ignoré)
+  seatTemp: [],              // ids touchés dans l'ordre, sur l'écran de placement
+  afterSeating: false,       // enchaîner vers la distribution après le placement
+  buildingsEnabled: false,   // extension « Le Village » (bâtiments)
+  eventsEnabled: false,      // cartes Événements (inspirées Nouvelle Lune)
+  historySaved: false,       // partie déjà archivée dans l'historique
+  villageScreen: false,      // affichage public « écran du village »
   dealMode: null,            // 'phone' | 'list'
   dealDone: [],              // ids ayant vu leur carte
   dealShow: null,            // id en cours de révélation (mode téléphone)
@@ -70,9 +204,18 @@ const CAUSE_LABEL = {
 };
 
 // ——————————————————————— Sons / vibrations ———————————————————————
+let _audioCtx = null;
+function audioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+function soundOn() { return S.settings.sound !== false; }
+
 function beep(times = 3) {
+  if (!soundOn()) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtx();
     for (let i = 0; i < times; i++) {
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
@@ -82,6 +225,57 @@ function beep(times = 3) {
     }
   } catch (e) { /* audio indisponible */ }
   if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+}
+
+// Ambiances synthétisées (aucun fichier externe) :
+// hurlement à la tombée de la nuit, aube au réveil, cloche au vote.
+function playAmbience(kind) {
+  if (!soundOn()) return;
+  try {
+    const ctx = audioCtx();
+    const t0 = ctx.currentTime;
+    if (kind === 'howl') {
+      // Hurlement de loup : glissando avec vibrato, deux voix légèrement désaccordées
+      [0, 6].forEach(detune => {
+        const o = ctx.createOscillator(), g = ctx.createGain(), v = ctx.createOscillator(), vg = ctx.createGain();
+        o.type = 'sine'; o.detune.value = detune;
+        v.frequency.value = 5.5; vg.gain.value = 9;
+        v.connect(vg); vg.connect(o.frequency);
+        o.frequency.setValueAtTime(240, t0);
+        o.frequency.linearRampToValueAtTime(540, t0 + 0.55);
+        o.frequency.setValueAtTime(540, t0 + 0.9);
+        o.frequency.linearRampToValueAtTime(360, t0 + 1.8);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.14, t0 + 0.35);
+        g.gain.setValueAtTime(0.14, t0 + 1.1);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t0); v.start(t0); o.stop(t0 + 2.05); v.stop(t0 + 2.05);
+      });
+    } else if (kind === 'dawn') {
+      // Aube : trois notes ascendantes claires
+      [523.25, 659.25, 783.99].forEach((f, i) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'triangle'; o.frequency.value = f;
+        const t = t0 + i * 0.22;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t); o.stop(t + 0.5);
+      });
+    } else if (kind === 'bell') {
+      // Cloche du vote : fondamentale + partiel, longue résonance
+      [[440, 0.18], [880, 0.1], [1318, 0.05]].forEach(([f, vol]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        g.gain.setValueAtTime(vol, t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t0); o.stop(t0 + 1.65);
+      });
+    }
+  } catch (e) { /* audio indisponible */ }
 }
 
 // ——————————————————————— Minuteurs (hors état sauvegardé) ———————————————————————
@@ -116,6 +310,17 @@ function timerPaint(key) {
   el.textContent = fmtTime(t.remaining);
   el.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
   if (btn) btn.textContent = t.running ? '⏸ Pause' : (t.remaining === 0 ? '🔁 Fini' : '▶️ Lancer');
+  const bar = document.getElementById(`timerbar-${key}`);
+  if (bar) {
+    bar.style.width = `${t.total ? Math.round((t.remaining / t.total) * 100) : 0}%`;
+    bar.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
+  }
+  // Miroir grand format sur l'écran du village
+  const big = document.getElementById(`timerbig-${key}`);
+  if (big) {
+    big.textContent = fmtTime(t.remaining);
+    big.classList.toggle('warning', t.remaining <= 10 && t.remaining > 0);
+  }
 }
 function fmtTime(s) { return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 function timerHTML(key, secs, label) {
@@ -124,6 +329,7 @@ function timerHTML(key, secs, label) {
     <div class="center">
       <div class="muted small">${esc(label)}</div>
       <div class="timer-display ${t.remaining <= 10 && t.remaining > 0 ? 'warning' : ''}" id="timer-${key}">${fmtTime(t.remaining)}</div>
+      <div class="timer-bar"><i id="timerbar-${key}" style="width:${t.total ? Math.round((t.remaining / t.total) * 100) : 0}%" class="${t.remaining <= 10 && t.remaining > 0 ? 'warning' : ''}"></i></div>
       <div class="row" style="justify-content:center">
         <button class="btn-primary" id="timerbtn-${key}" data-action="timerToggle" data-arg="${key}">${t.running ? '⏸ Pause' : '▶️ Lancer'}</button>
         <button class="btn-sm" data-action="timerAdd" data-arg="${key}">+30 s</button>
@@ -162,11 +368,11 @@ function buildNight() {
     say: 'Chien-Loup, réveille-toi. Choisis ton camp : Villageois ou Loup-Garou ?',
     help: 'S’il choisit les loups, il se réveillera chaque nuit avec eux.' });
 
-  if (n === 1 && roleInPlay('trois_freres')) add({ key: 'freres', icon: '👨‍👨‍👦', title: 'Les Trois Frères', ui: 'info',
+  if (n === 1 && roleInPlay('trois_freres')) add({ key: 'freres', icon: '👨‍👨‍👦', title: 'Les Trois Frères', ui: 'info', briefRoleId: 'trois_freres',
     say: 'Les Trois Frères, réveillez-vous et reconnaissez-vous.',
     help: 'Vous pourrez les réveiller de temps en temps (nuits suivantes) pour qu’ils se concertent en silence.' });
 
-  if (n === 1 && roleInPlay('deux_soeurs')) add({ key: 'soeurs', icon: '👭', title: 'Les Deux Sœurs', ui: 'info',
+  if (n === 1 && roleInPlay('deux_soeurs')) add({ key: 'soeurs', icon: '👭', title: 'Les Deux Sœurs', ui: 'info', briefRoleId: 'deux_soeurs',
     say: 'Les Deux Sœurs, réveillez-vous et reconnaissez-vous.',
     help: 'Vous pourrez les réveiller de temps en temps (nuits suivantes) pour qu’elles se concertent en silence.' });
 
@@ -183,7 +389,7 @@ function buildNight() {
     help: 'Il désigne un joueur : vous répondez OUI si ce joueur ou l’un de ses deux voisins vivants est un Loup-Garou. Si la réponse est NON, il perd son pouvoir.' });
 
   const wolves = alivePlayers().filter(isWolfSide);
-  if (wolves.length) add({ key: 'loups', icon: '🐺', title: 'Les Loups-Garous', ui: 'pick', optional: true,
+  if (wolves.length) add({ key: 'loups', icon: '🐺', title: 'Les Loups-Garous', ui: 'pick', optional: true, briefRoleId: 'loup',
     say: 'Loups-Garous, réveillez-vous et désignez votre victime.',
     help: `Loups à appeler : ${wolves.map(p => p.name).join(', ')}.` +
       (roleAlive('petite_fille') ? ' 👧 La Petite Fille peut espionner discrètement.' : '') });
@@ -377,23 +583,72 @@ const actions = {
     const input = document.getElementById('newPlayerName');
     const name = (input?.value || '').trim();
     if (!name) return;
-    S.players.push({ id: Date.now() + Math.floor(Math.random() * 1000), name, roleId: null, alive: true });
+    S.players.push(makePlayer(name));
     input.value = '';
+    S.seatingDone = false;
     update();
     document.getElementById('newPlayerName')?.focus();
   },
-  removePlayer(id) { S.players = S.players.filter(p => p.id !== +id); update(); },
-  movePlayer(arg) {
-    const [id, dir] = arg.split(':');
-    const i = S.players.findIndex(p => p.id === +id);
-    const j = i + (dir === 'up' ? -1 : 1);
-    if (i < 0 || j < 0 || j >= S.players.length) return;
-    [S.players[i], S.players[j]] = [S.players[j], S.players[i]];
+  addFromRoster(name) {
+    if (S.players.some(p => p.name === name)) return;
+    S.players.push(makePlayer(name));
+    S.seatingDone = false;
     update();
   },
+  addAllRoster() {
+    loadRoster().forEach(n => { if (!S.players.some(p => p.name === n)) S.players.push(makePlayer(n)); });
+    S.seatingDone = false;
+    update();
+  },
+  clearRoster() { askConfirm('Oublier tous les joueurs enregistrés ?', 'doClearRoster'); },
+  doClearRoster() { try { localStorage.removeItem(ROSTER_KEY); } catch (e) { } update(); },
+  removeFromRoster(name) {
+    try { localStorage.setItem(ROSTER_KEY, JSON.stringify(loadRoster().filter(n => n !== name))); } catch (e) { }
+    update();
+  },
+  // Nouvelle partie avec la même table (depuis l'écran de victoire ou l'accueil)
+  nextGame() {
+    archiveGame();
+    resetPlayersForNewGame();
+    S.phase = 'night'; S.nightNumber = 0; S.dayCount = 0;
+    S.night = null; S.day = null; S.announce = { deaths: [], queue: [] };
+    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false; S.historySaved = false;
+    S.screen = 'players';
+    toast('🔁 Même table ! Ajoutez ou retirez des joueurs, puis continuez.');
+    update();
+  },
+  replayLast() {
+    const last = loadLastSetup();
+    if (!last?.players?.length) return;
+    const keep = S.settings;
+    S = defaultState(); S.settings = keep;
+    S.players = last.players.map(makePlayer);
+    S.roleCounts = last.roleCounts || {}; S.styleId = last.styleId || null;
+    S.buildingsEnabled = !!last.buildingsEnabled;
+    S.screen = 'players';
+    toast('🔁 Dernière table rechargée — ajustez si besoin.');
+    update();
+  },
+  removePlayer(id) { S.players = S.players.filter(p => p.id !== +id); S.seatingDone = false; update(); },
+
+  // ——— Ordre de table (placement en un tap par joueur) ———
+  toSeating(fromDeal) { S.screen = 'seating'; S.seatTemp = []; S.afterSeating = fromDeal === 'deal'; update(); },
+  seatTap(id) {
+    const i = S.seatTemp.indexOf(+id);
+    if (i >= 0) S.seatTemp.splice(i, 1); else S.seatTemp.push(+id);
+    update();
+  },
+  seatReset() { S.seatTemp = []; update(); },
+  seatValidate() {
+    if (S.seatTemp.length !== S.players.length) return;
+    S.players = S.seatTemp.map(id => byId(id));
+    S.seatingDone = true;
+    finishSeating();
+  },
+  seatSkip() { S.seatingDone = true; finishSeating(); },
   toRoles() {
     if (S.players.length < 4) { toast('Il faut au moins 4 joueurs.'); return; }
-    if (!Object.keys(S.roleCounts).length) S.roleCounts = suggestComposition(S.players.length);
+    if (!Object.keys(S.roleCounts).length) { S.roleCounts = suggestComposition(S.players.length); S.styleId = 'classique'; }
     S.screen = 'roles'; update();
   },
 
@@ -413,15 +668,65 @@ const actions = {
     if (next) S.roleCounts[id] = next; else delete S.roleCounts[id];
     update();
   },
-  roleSuggest() { S.roleCounts = suggestComposition(S.players.length); update(); },
+  roleSuggest() { S.roleCounts = suggestComposition(S.players.length); S.styleId = 'classique'; update(); },
+  applyStyle(id) {
+    S.roleCounts = composeStyle(id, S.players.length);
+    S.styleId = id;
+    const s = styleById[id];
+    toast(`${s.icon} Style « ${s.name} » appliqué — ajustez librement ensuite.`);
+    update();
+  },
+  toggleBuildings() {
+    S.buildingsEnabled = !S.buildingsEnabled;
+    if (!S.buildingsEnabled) S.players.forEach(p => delete p.building);
+    update();
+  },
+  toggleEvents() { S.eventsEnabled = !S.eventsEnabled; update(); },
+  drawEvent() {
+    let drawn = S.flags.eventsDrawn || [];
+    let pool = EVENTS.filter(e => !drawn.includes(e.id));
+    if (!pool.length) { drawn = []; pool = EVENTS; } // paquet épuisé : on rebats tout
+    const ev = pool[Math.floor(Math.random() * pool.length)];
+    S.flags.eventsDrawn = [...drawn, ev.id];
+    S.flags.currentEvent = ev.id;
+    addLog(`🎴 Événement : ${ev.icon} ${ev.name}`);
+    update();
+  },
+  dismissEvent() { S.flags.currentEvent = null; update(); },
+  shareRecap() {
+    archiveGame();
+    const h = loadHistory();
+    if (h.length) shareText(recapText(h[0]));
+  },
+  shareHistoryRecap(idx) {
+    const h = loadHistory();
+    if (h[+idx]) shareText(recapText(h[+idx]));
+  },
+  toStats() { S.screen = 'stats'; update(); },
+  statsBack() { S.screen = 'home'; update(); },
+  clearHistory() { askConfirm('Effacer tout l’historique des parties ?', 'doClearHistory'); },
+  doClearHistory() { try { localStorage.removeItem(HISTORY_KEY); } catch (e) { } update(); },
+  showVillageScreen() { S.villageScreen = true; update(); },
+  hideVillageScreen() { S.villageScreen = false; update(); },
+  toggleSound() {
+    // conserve les durées saisies avant de re-rendre la modale
+    const d = +document.getElementById('set-debate')?.value;
+    const v = +document.getElementById('set-vote')?.value;
+    if (d > 0) S.settings.debateSec = Math.round(d * 60);
+    if (v > 0) S.settings.voteSec = v;
+    S.settings.sound = !soundOn();
+    update();
+  },
+  dealBuildings() { assignBuildings(); update(); },
   roleClear() { S.roleCounts = {}; update(); },
   backToPlayers() { S.screen = 'players'; update(); },
   toDeal() {
     const total = Object.values(S.roleCounts).reduce((a, b) => a + b, 0);
     if (total !== S.players.length) { toast(`Il faut exactement ${S.players.length} cartes (actuellement ${total}).`); return; }
-    dealCards();
-    S.screen = 'deal'; S.dealMode = null; S.dealDone = []; S.dealShow = null; S.dealRevealed = false;
-    update();
+    // L'ordre de table n'est demandé que si un rôle utilise les voisins
+    const needsSeating = ['renard', 'montreur_ours', 'chevalier'].some(id => S.roleCounts[id]);
+    if (needsSeating && !S.seatingDone) { S.screen = 'seating'; S.seatTemp = []; S.afterSeating = true; update(); return; }
+    proceedToDeal();
   },
 
   // ——— Distribution ———
@@ -441,10 +746,12 @@ const actions = {
   backToRoles() { S.screen = 'roles'; update(); },
   startGame() {
     if (S.players.some(p => !p.roleId)) { toast('Tous les joueurs doivent avoir une carte.'); return; }
+    rememberPlayers(S.players.map(p => p.name));
+    rememberLastSetup();
     // Groupes du Sectaire : info au lancement
     S.players.forEach(p => { p.alive = true; });
     S.phase = 'night'; S.nightNumber = 1; S.dayCount = 0;
-    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false;
+    S.flags = {}; S.log = []; S.winner = null; S.winnerDismissed = false; S.historySaved = false;
     addLog(`🎲 Début de partie : ${S.players.length} joueurs — ${Object.entries(S.roleCounts).map(([id, n]) => `${roleById[id].name}${n > 1 ? ' ×' + n : ''}`).join(', ')}`);
     buildNight();
     S.screen = 'game'; S.tab = 'flow';
@@ -539,7 +846,7 @@ const actions = {
     S.flags.sorciereMortUsed = S.night.actions.sorciereKill != null;
     update();
   },
-  finishNight() { resolveNight(); update(); },
+  finishNight() { resolveNight(); playAmbience('dawn'); update(); },
 
   // ——— Matin (annonces & cascades) ———
   promptPick(arg) {
@@ -582,7 +889,7 @@ const actions = {
     update();
   },
   skipCaptain() { addLog('👑 Pas de Capitaine élu.'); S.day.stage = 'debat'; update(); },
-  toVote() { S.day.stage = 'vote'; timerReset('vote', S.settings.voteSec); update(); },
+  toVote() { S.day.stage = 'vote'; timerReset('vote', S.settings.voteSec); playAmbience('bell'); update(); },
   backToDebate() { S.day.stage = 'debat'; update(); },
   voteResult(arg) {
     S.announce = { deaths: [], queue: [] };
@@ -674,13 +981,16 @@ const actions = {
     S.nightNumber++;
     S.phase = 'night';
     S.announce = { deaths: [], queue: [] };
+    S.flags.currentEvent = null;
+    S.villageScreen = false;
     buildNight();
+    playAmbience('howl');
     update();
   },
 
   // ——— Victoire ———
   continueAnyway() { S.winnerDismissed = true; update(); },
-  endGame() { const keep = S.settings; S = defaultState(); S.settings = keep; update(); },
+  endGame() { archiveGame(); const keep = S.settings; S = defaultState(); S.settings = keep; update(); },
 
   // ——— Tableau des joueurs (admin) ———
   adminKill(id) { askConfirm(`Éliminer ${byId(+id)?.name} manuellement ?`, 'doAdminKill', id); },
@@ -725,6 +1035,18 @@ function finalizeVoteKill(id) {
   checkVictory();
 }
 
+function proceedToDeal() {
+  dealCards();
+  if (S.buildingsEnabled) assignBuildings();
+  S.screen = 'deal'; S.dealMode = null; S.dealDone = []; S.dealShow = null; S.dealRevealed = false;
+  update();
+}
+
+function finishSeating() {
+  if (S.afterSeating) { S.afterSeating = false; proceedToDeal(); }
+  else { S.screen = 'players'; update(); }
+}
+
 function dealCards() {
   const deck = [];
   Object.entries(S.roleCounts).forEach(([id, n]) => { for (let i = 0; i < n; i++) deck.push(id); });
@@ -735,10 +1057,29 @@ function dealCards() {
   S.players.forEach((p, i) => { p.roleId = deck[i]; });
 }
 
+// Attribue les bâtiments du Village : les 8 bâtiments uniques d'abord,
+// puis tout le monde restant est Fermier.
+function assignBuildings() {
+  const uniques = BUILDINGS.filter(b => !b.multi).map(b => b.id);
+  for (let i = uniques.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [uniques[i], uniques[j]] = [uniques[j], uniques[i]];
+  }
+  const order = [...S.players];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  order.forEach((p, i) => { p.building = i < uniques.length ? uniques[i] : 'fermier'; });
+}
+
 function curStep() { return S.night?.steps[S.night.idx]; }
 
 // ————————————————————————— Rendu —————————————————————————
 function render() {
+  // Ambiance visuelle selon la phase (ciel étoilé la nuit, ambre le jour)
+  document.body.className = S.screen === 'game' ? `phase-${S.phase}` : 'phase-night';
+  updateWakeLock();
   let html = '';
   switch (S.screen) {
     case 'home': html = renderHome(); break;
@@ -746,7 +1087,10 @@ function render() {
     case 'roles': html = renderRolesSetup(); break;
     case 'deal': html = renderDeal(); break;
     case 'game': html = renderGame(); break;
+    case 'stats': html = renderStats(); break;
+    case 'seating': html = renderSeating(); break;
   }
+  if (S.villageScreen && S.screen === 'game') html = renderVillageScreen();
   if (S.showSettings) html += renderSettings();
   if (confirmBox) html += `
     <div class="modal-backdrop">
@@ -778,16 +1122,22 @@ function bindActions() {
 // ——— Accueil ———
 function renderHome() {
   const hasGame = S.players.length > 0 && S.players.some(p => p.roleId);
+  const last = loadLastSetup();
   return `
-    <div class="center" style="padding-top:8vh">
-      <div style="font-size:5rem">🐺</div>
-      <h1>Loup-Garou</h1>
-      <p class="muted">Assistant du narrateur — Thiercelieux, édition complète</p>
-      <div class="spacer"></div>
+    <div class="center" style="padding-top:6vh">
+      <div class="hero">
+        <div class="moon"></div>
+        <div class="wolf">🐺</div>
+      </div>
+      <h1 class="home-title">Loup-Garou</h1>
+      <p class="home-sub">Assistant du narrateur · Thiercelieux</p>
+      <div class="home-rule"></div>
       ${hasGame ? `<button class="btn-primary btn-big" data-action="resumeGame">▶️ Reprendre la partie</button>` : ''}
-      <button class="btn-big ${hasGame ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
+      ${!hasGame && last?.players?.length ? `<button class="btn-primary btn-big" data-action="replayLast">🔁 Rejouer avec la même table (${last.players.length} joueurs)</button>` : ''}
+      <button class="btn-big ${hasGame || last?.players?.length ? '' : 'btn-primary'}" data-action="newGame">🌙 Nouvelle partie</button>
+      ${loadHistory().length ? `<button class="btn-big btn-ghost" data-action="toStats">📊 Historique & statistiques</button>` : ''}
       <div class="spacer"></div>
-      <p class="muted small">L'app guide le narrateur : ordre d'appel de la nuit,<br>morts automatiques, minuteurs de débat et de vote.</p>
+      <p class="muted small">L'app vous souffle quoi dire, qui appeler,<br>et compte les morts à votre place.</p>
     </div>`;
 }
 
@@ -799,33 +1149,92 @@ function renderPlayersSetup() {
       <span class="badge">Étape 1/3 — Joueurs</span>
     </div>
     <h2>👥 Les joueurs (${S.players.length})</h2>
-    <p class="muted small">Ajoutez les joueurs <b>dans l'ordre où ils sont assis</b> autour de la table (important pour le Renard, le Montreur d'Ours et le Chevalier).</p>
+    <p class="muted small">Dans n'importe quel ordre — si un rôle a besoin des voisins de table, l'app vous le demandera au bon moment.</p>
     <div class="row" style="margin:12px 0">
       <input type="text" id="newPlayerName" placeholder="Prénom du joueur…" autocomplete="off">
       <button class="btn-primary" data-action="addPlayer">＋</button>
     </div>
+    ${renderRosterChips()}
     ${S.players.map((p, i) => `
       <div class="player-row">
         <span class="num">${i + 1}.</span>
         <span class="name">${esc(p.name)}</span>
-        <button class="btn-sm btn-ghost" data-action="movePlayer" data-arg="${p.id}:up" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="btn-sm btn-ghost" data-action="movePlayer" data-arg="${p.id}:down" ${i === S.players.length - 1 ? 'disabled' : ''}>↓</button>
         <button class="btn-sm btn-ghost" data-action="removePlayer" data-arg="${p.id}">✕</button>
       </div>`).join('')}
+    ${S.players.length >= 3 ? `<button class="btn-big btn-ghost" data-action="toSeating">🪑 Ordre de table ${S.seatingDone ? '✅' : '(facultatif)'}</button>` : ''}
     ${S.players.length ? `<button class="btn-primary btn-big" data-action="toRoles">Choisir les personnages →</button>` : ''}
   `;
 }
 
+// ——— Placement autour de la table : un tap par joueur, dans l'ordre ———
+function renderSeating() {
+  const n = S.players.length;
+  const done = S.seatTemp.length;
+  return `
+    <div class="topbar">
+      <button class="btn-sm btn-ghost" data-action="seatSkip">Passer (garder l'ordre actuel)</button>
+      <span class="badge">🪑 Ordre de table</span>
+    </div>
+    <h2>🪑 Qui est assis où ?</h2>
+    <div class="narrator-say">Touchez les prénoms <b>dans l'ordre des places</b>, en tournant dans le sens des aiguilles d'une montre. Commencez par n'importe qui.</div>
+    <p class="muted small">Utile uniquement pour les voisins de table : 🦊 Renard, 🐻 Montreur d'Ours, ⚔️ Chevalier. L'app calcule ensuite les voisinages toute seule.</p>
+    <div class="pick-list" style="margin-top:14px">
+      ${S.players.map(p => {
+        const idx = S.seatTemp.indexOf(p.id);
+        return `<button class="pick-btn seat-chip ${idx >= 0 ? 'picked' : ''}" data-action="seatTap" data-arg="${p.id}">
+          ${idx >= 0 ? `<span class="snum">${idx + 1}</span>` : ''}${esc(p.name)}
+        </button>`;
+      }).join('')}
+    </div>
+    <p class="muted small center">${done} / ${n} placés${done ? ' — retouchez un prénom pour le retirer' : ''}</p>
+    <div class="row">
+      <button class="btn-ghost" data-action="seatReset">↺ Recommencer</button>
+      <button class="btn-primary grow" data-action="seatValidate" ${done === n ? '' : 'disabled'}>✅ Valider l'ordre</button>
+    </div>
+  `;
+}
+
+// ——— Joueurs déjà enregistrés : ajout en un tap ———
+function renderRosterChips() {
+  const available = loadRoster().filter(n => !S.players.some(p => p.name === n));
+  if (!available.length) return '';
+  return `
+    <div class="panel" style="padding:12px 14px">
+      <div class="row-between">
+        <h3 style="margin:0">💾 Joueurs enregistrés</h3>
+        <span class="row">
+          <button class="btn-sm" data-action="addAllRoster">Tout ajouter</button>
+          <button class="btn-sm btn-ghost" data-action="clearRoster">Oublier</button>
+        </span>
+      </div>
+      <div class="pick-list" style="margin-bottom:0">
+        ${available.map(n => `
+          <span class="roster-chip">
+            <button class="pick-btn" data-action="addFromRoster" data-arg="${esc(n)}">＋ ${esc(n)}</button>
+            <button class="roster-x" data-action="removeFromRoster" data-arg="${esc(n)}" title="Retirer de la liste">×</button>
+          </span>`).join('')}
+      </div>
+    </div>`;
+}
+
 // ——— Rôles (setup) ———
+// Écran court : une ambiance, la composition obtenue, et le catalogue
+// des 30 personnages seulement pour qui veut ajuster carte par carte.
 function renderRolesSetup() {
   const total = Object.values(S.roleCounts).reduce((a, b) => a + b, 0);
   const n = S.players.length;
   const ok = total === n;
+  const chosen = Object.entries(S.roleCounts).filter(([, c]) => c > 0);
   const groups = [
     ['🐺 Loups-Garous', ROLES.filter(r => r.camp === 'loups')],
     ['🏡 Village', ROLES.filter(r => r.camp === 'village')],
     ['🎭 Solitaires', ROLES.filter(r => r.camp === 'solo')],
   ];
+  const stepper = (r, c) => `
+    <button class="btn-round btn-ghost" data-action="roleDec" data-arg="${r.id}" ${c ? '' : 'disabled'}>−</button>
+    <span class="count">${c}</span>
+    <button class="btn-round" data-action="roleInc" data-arg="${r.id}" ${c >= r.max ? 'disabled' : ''}>＋</button>`;
+
   return `
     <div class="topbar">
       <button class="btn-sm btn-ghost" data-action="backToPlayers">← Joueurs</button>
@@ -833,28 +1242,71 @@ function renderRolesSetup() {
     </div>
     <div class="counter-bar">
       <span>Cartes : <span class="${ok ? 'ok' : 'ko'}">${total} / ${n}</span></span>
-      <span class="row">
-        <button class="btn-sm" data-action="roleSuggest">✨ Suggestion</button>
-        <button class="btn-sm btn-ghost" data-action="roleClear">Vider</button>
-      </span>
+      <span class="small ${ok ? 'ok' : 'muted'}">${ok ? '✓ prêt' : (total < n ? `il en manque ${n - total}` : `${total - n} en trop`)}</span>
     </div>
-    ${groups.map(([title, roles]) => `
-      <h3 style="margin-top:14px">${title}</h3>
-      ${roles.map(r => {
-        const c = S.roleCounts[r.id] || 0;
-        return `
-        <div class="role-card ${c ? 'selected' : ''}">
-          <span class="icon">${r.icon}</span>
-          <div class="info">
-            <div class="rname">${r.name}${r.pair ? ` <span class="muted small">(×${r.pair})</span>` : ''}</div>
-            <div class="rshort">${r.short}</div>
-          </div>
-          <button class="btn-round btn-ghost" data-action="roleDec" data-arg="${r.id}" ${c ? '' : 'disabled'}>−</button>
-          <span class="count">${c}</span>
-          <button class="btn-round" data-action="roleInc" data-arg="${r.id}" ${c >= r.max ? 'disabled' : ''}>＋</button>
-        </div>`;
-      }).join('')}
-    `).join('')}
+
+    <h3 class="section-title">1 · Choisissez une ambiance</h3>
+    <div class="style-grid">
+      ${GAME_STYLES.map(g => `
+        <button class="style-btn ${S.styleId === g.id ? 'active' : ''}" data-action="applyStyle" data-arg="${g.id}">
+          <span class="sicon">${g.icon}</span>
+          <span class="sname">${g.name}</span>
+          <span class="sdesc">${g.desc}</span>
+        </button>`).join('')}
+    </div>
+
+    <h3 class="section-title">2 · Votre composition</h3>
+    ${chosen.length ? chosen.map(([id, c]) => {
+      const r = roleById[id];
+      return `
+      <div class="role-line is-${r.camp}">
+        <span class="icon">${r.icon}</span>
+        <div class="info">
+          <div class="rname">${r.name}</div>
+          <div class="rshort">${r.short}</div>
+        </div>
+        ${stepper(r, c)}
+      </div>`;
+    }).join('') : '<p class="muted small">Touchez une ambiance ci-dessus — ou ajoutez les personnages un par un juste en dessous.</p>'}
+    ${chosen.length ? '<button class="btn-sm btn-ghost" data-action="roleClear">Tout vider</button>' : ''}
+
+    <details class="panel">
+      <summary>➕ Ajouter d'autres personnages <span class="muted small">(les 30 cartes)</span></summary>
+      ${groups.map(([title, roles]) => `
+        <h3 style="margin-top:12px">${title}</h3>
+        ${roles.map(r => {
+          const c = S.roleCounts[r.id] || 0;
+          return `
+          <div class="role-card is-${r.camp} ${c ? 'selected' : ''}">
+            <span class="icon">${r.icon}</span>
+            <div class="info">
+              <div class="rname">${r.name}${r.pair ? ` <span class="muted small">(×${r.pair})</span>` : ''}</div>
+              <div class="rshort">${r.short}</div>
+            </div>
+            ${stepper(r, c)}
+          </div>`;
+        }).join('')}
+      `).join('')}
+    </details>
+
+    <details class="panel">
+      <summary>🎲 Extensions ${S.buildingsEnabled || S.eventsEnabled ? '<span class="pill-on">actives</span>' : '<span class="muted small">(facultatif)</span>'}</summary>
+      <div class="row-between opt-row">
+        <div>
+          <b>🏘️ Le Village</b><br>
+          <span class="muted small">Chaque joueur reçoit aussi un bâtiment visible : Châtelain, Bailli, Tavernier, Barbier… les autres sont Fermiers.</span>
+        </div>
+        <button class="btn-sm ${S.buildingsEnabled ? 'btn-ok' : ''}" data-action="toggleBuildings">${S.buildingsEnabled ? '✅ Oui' : 'Activer'}</button>
+      </div>
+      <div class="row-between opt-row">
+        <div>
+          <b>🎴 Cartes Événements</b><br>
+          <span class="muted small">Certains matins, une carte bouscule le village : vote à l'aveugle, couvre-feu, vœu de silence…</span>
+        </div>
+        <button class="btn-sm ${S.eventsEnabled ? 'btn-ok' : ''}" data-action="toggleEvents">${S.eventsEnabled ? '✅ Oui' : 'Activer'}</button>
+      </div>
+    </details>
+
     <button class="btn-primary btn-big" data-action="toDeal" ${ok ? '' : 'disabled'}>Distribuer les cartes →</button>
     <div class="spacer"></div>
   `;
@@ -915,7 +1367,21 @@ function renderDeal() {
       <button class="btn-big btn-ghost" data-action="redeal">🔀 Re-mélanger</button>
       <button class="btn-big btn-primary" data-action="startGame">🌙 Commencer la partie</button>`;
   }
+  const buildingsPanel = S.buildingsEnabled ? `
+    <details class="panel" open>
+      <summary>🏘️ Bâtiments du Village (publics)</summary>
+      <p class="muted small">Posez les tuiles devant les joueurs. Ajustez ici si besoin :</p>
+      ${S.players.map(p => `
+        <div class="player-row">
+          <span class="name">${esc(p.name)}</span>
+          <select data-pid="${p.id}" class="building-select" style="max-width:55%">
+            ${BUILDINGS.map(b => `<option value="${b.id}" ${p.building === b.id ? 'selected' : ''}>${b.icon} ${b.name}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      <button class="btn-sm" data-action="dealBuildings">🔀 Rebattre les bâtiments</button>
+    </details>` : '';
   const extra = `
+    ${buildingsPanel}
     ${roleInPlay('voleur') ? `<div class="panel small">🃏 <b>Voleur en jeu</b> : préparez 2 cartes supplémentaires face cachée au centre de la table.</div>` : ''}
     ${roleInPlay('comedien') ? `<div class="panel small">🎭 <b>Comédien en jeu</b> : préparez 3 cartes à pouvoir non distribuées, face visible.</div>` : ''}
     ${roleInPlay('abominable_sectaire') ? `<div class="panel small">🕯️ <b>Abominable Sectaire en jeu</b> : annoncez à voix haute la séparation du village en 2 groupes (ex. : gauche / droite de la table).</div>` : ''}`;
@@ -970,7 +1436,9 @@ function renderVictory() {
       <h2>${w.title}</h2>
       <p>${w.text}</p>
       <div class="spacer"></div>
-      <button class="btn-primary btn-big" data-action="endGame">🎉 Terminer la partie</button>
+      <button class="btn-big" data-action="shareRecap">📤 Partager le récit de la partie</button>
+      <button class="btn-primary btn-big" data-action="nextGame">🔁 Partie suivante (même table)</button>
+      <button class="btn-big" data-action="endGame">🎉 Terminer la partie</button>
       <button class="btn-big btn-ghost" data-action="continueAnyway">Continuer quand même</button>
     </div>
     ${renderBoard()}`;
@@ -982,6 +1450,9 @@ function pickButtons(step) {
   const multi = step.ui === 'pickMulti' || step.ui === 'flute';
   let candidates = alivePlayers();
   if (step.onlyWolves) candidates = candidates.filter(p => isWolfSide(p) && p.roleId !== 'loup_blanc');
+  // Règle officielle : les loups ne peuvent pas dévorer un des leurs
+  // (seul le Loup Blanc en a le pouvoir, lors de son réveil solitaire).
+  if (step.key === 'loups' || step.key === 'gml') candidates = candidates.filter(p => !isWolfSide(p));
   if (step.key === 'salvateur' && S.flags.lastProtected != null) candidates = candidates.filter(p => p.id !== S.flags.lastProtected);
   if (step.ui === 'flute') candidates = candidates.filter(p => !p.charmed && p.roleId !== 'joueur_flute');
   return `<div class="pick-list">
@@ -1123,21 +1594,24 @@ function renderNight() {
   }
 
   const isLast = step.ui === 'fin';
+  const pct = Math.round(((S.night.idx + 1) / S.night.steps.length) * 100);
+  // L'ordre à l'écran suit les gestes réels : phrase à dire → action → phrase de clôture.
   return `
+    <div class="step-bar"><i style="width:${pct}%"></i></div>
     <div class="panel panel-accent">
-      <div class="step-progress">Étape ${S.night.idx + 1} / ${S.night.steps.length}</div>
       <div class="step-header">
         <span class="icon">${icon}</span>
         <div>
           <h2 style="margin:0">${title}</h2>
-          ${holder ? `<span class="muted small">Joueur : ${esc(holder.name)}</span>` : ''}
+          <span class="step-sub">${holder ? `${esc(holder.name)} · ` : ''}étape ${S.night.idx + 1}/${S.night.steps.length}</span>
         </div>
       </div>
-      <div class="narrator-say">🗣️ « ${step.say} »</div>
-      ${step.help ? `<p class="muted small">💡 ${step.help}</p>` : ''}
+      <div class="narrator-say">« ${step.say} »</div>
       ${body}
+      ${renderStepInfo(step)}
+      ${nightCloseLine(step)}
       <div class="row" style="margin-top:14px">
-        <button class="btn-ghost" data-action="nightPrev" ${S.night.idx === 0 ? 'disabled' : ''}>← Précédent</button>
+        <button class="btn-ghost" data-action="nightPrev" ${S.night.idx === 0 ? 'disabled' : ''}>←</button>
         <div class="grow"></div>
         ${isLast
           ? `<button class="btn-primary" data-action="finishNight">🌅 Le village se réveille</button>`
@@ -1145,6 +1619,62 @@ function renderNight() {
       </div>
     </div>
     ${renderNightOrderPreview()}`;
+}
+
+// Formule de fin de tour à prononcer avant d'appeler le rôle suivant.
+function nightCloseLine(step) {
+  if (['intro', 'fin'].includes(step.key)) return '';
+  let line;
+  if (step.key === 'loups') line = 'Loups-Garous, rendormez-vous.';
+  else if (step.key === 'freres') line = 'Les Trois Frères, rendormez-vous.';
+  else if (step.key === 'soeurs') line = 'Les Deux Sœurs, rendormez-vous.';
+  else if (step.key === 'cupidon') line = 'Cupidon, rendors-toi. Amoureux, ouvrez les yeux, reconnaissez-vous… et rendormez-vous.';
+  else if (step.key === 'flute') line = 'Joueur de Flûte, rendors-toi. Joueurs charmés, réveillez-vous, reconnaissez-vous… et rendormez-vous.';
+  else {
+    const role = roleById[step.roleId];
+    if (!role) return '';
+    line = `${role.name}, rendors-toi.`;
+  }
+  return `<div class="say-then">Puis, pour clore : <b>« ${line} »</b></div>`;
+}
+
+// Ce que le narrateur doit dire à voix haute pour les annonces
+// (morts de la nuit ou résultat du vote) — rédigé mot à mot.
+function announceScript(context) {
+  const lines = [];
+  if (context === 'morning') {
+    lines.push('Il fait jour, tout Thiercelieux se réveille… sauf peut-être certains.');
+    if (!S.announce.deaths.length) lines.push('Cette nuit, personne n’est mort ! Le village peut souffler.');
+  }
+  S.announce.deaths.forEach(d => {
+    const p = byId(d.id); const r = roleById[p.roleId];
+    if (context === 'morning') lines.push(`Cette nuit, ${p.name} a été ${CAUSE_LABEL[d.cause]}. Sa carte est révélée : ${p.name} était ${r.name} !`);
+    else lines.push(`Le village a désigné ${p.name}. Sa carte est révélée : ${p.name} était ${r.name} !`);
+  });
+  if (context === 'vote' && !S.announce.deaths.length) lines.push('Personne n’est éliminé ce tour-ci. La méfiance grandit…');
+  return `<div class="narrator-say"><span class="say-label">À dire au village</span>${lines.map(l => `<p style="margin:.35rem 0 0">« ${l} »</p>`).join('')}</div>`;
+}
+
+// Phrase à dire pour les enchaînements (Chasseur, Capitaine…).
+function promptSay(q) {
+  const name = q.playerId != null ? byId(q.playerId)?.name : '';
+  if (q.type === 'chasseur') return `<div class="narrator-say">« ${esc(name)} était le Chasseur ! Dans un dernier souffle, il arme son fusil… ${esc(name)}, qui abats-tu ? »</div>`;
+  if (q.type === 'capitaine') return `<div class="narrator-say">« ${esc(name)} était notre Capitaine. Avant de nous quitter, il désigne son successeur. »</div>`;
+  return ''; // chevalier & infos : consignes secrètes, rien à annoncer
+}
+
+// Rappel du rôle appelé : le but tient sur une ligne toujours visible,
+// le pouvoir détaillé et le conseil au narrateur se déplient à la demande.
+function renderStepInfo(step) {
+  const role = roleById[step.briefRoleId || step.roleId];
+  if (!role) return step.help ? `<details class="step-info"><summary>💡 Conseil au narrateur</summary><p>${step.help}</p></details>` : '';
+  return `
+    <div class="role-goal">🎯 <b>Son but :</b> ${roleGoal(role)}</div>
+    <details class="step-info">
+      <summary>${role.icon} Pouvoir du ${role.name}${step.help ? ' & conseil' : ''}</summary>
+      <p>${role.desc}</p>
+      ${step.help ? `<p class="muted">💡 ${step.help}</p>` : ''}
+    </details>`;
 }
 
 function renderNightRecap() {
@@ -1190,10 +1720,10 @@ function renderMorning() {
       prompt = `<div class="panel panel-accent"><p>${q.text}</p>
         <button class="btn-primary btn-big" data-action="promptDismiss">Compris →</button></div>`;
     } else if (q.type === 'capitaine') {
-      prompt = `<div class="panel panel-accent"><p>${q.text}</p>${promptPickButtons('promptPick')}
+      prompt = `<div class="panel panel-accent">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}
         <button class="btn-sm btn-ghost" data-action="promptSkip">Pas de successeur</button></div>`;
     } else if (q.type === 'chasseur') {
-      prompt = `<div class="panel panel-danger"><p>${q.text}</p>${promptPickButtons('promptPick')}
+      prompt = `<div class="panel panel-danger">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}
         <button class="btn-sm btn-ghost" data-action="promptSkip">Il ne tire pas</button></div>`;
     } else if (q.type === 'chevalier') {
       const wolves = alivePlayers().filter(isWolfSide);
@@ -1206,17 +1736,19 @@ function renderMorning() {
   const oursNote = renderOursNote();
   return `
     <h2>🌅 L'aube se lève sur Thiercelieux</h2>
+    ${announceScript('morning')}
     ${deaths.length
       ? deaths.map(d => {
           const p = byId(d.id); const r = roleById[p.roleId];
-          return `<div class="death-item"><span style="font-size:1.4rem">💀</span>
-            <div><b>${esc(p.name)}</b> — ${CAUSE_LABEL[d.cause]}<br><span class="muted small">Révélez sa carte : ${r.icon} ${r.name}</span></div></div>`;
+          return `<div class="death-item"><span class="dicon">💀</span>
+            <div><b>${esc(p.name)}</b> <span class="muted small">— révélez sa carte :</span> ${r.icon} <b>${r.name}</b></div></div>`;
         }).join('')
-      : `<div class="no-death">🌞 Aucune mort cette nuit ! Annoncez la bonne nouvelle.</div>`}
+      : `<div class="no-death">🌞 Aucune mort cette nuit !</div>`}
     ${prompt}
     ${!q ? `
       ${oursNote}
       ${S.flags.corbeauTarget != null ? `<div class="panel small">🐦‍⬛ Annoncez : <b>${esc(byId(S.flags.corbeauTarget)?.name)}</b> a été visé(e) par le Corbeau → il/elle commence le vote avec <b>2 voix contre lui/elle</b>.</div>` : ''}
+      ${renderEventPanel()}
       <button class="btn-primary btn-big" data-action="toDay">☀️ Passer au jour (débat & vote)</button>` : ''}
   `;
 }
@@ -1253,7 +1785,7 @@ function renderDay() {
     content = `
       <div class="panel panel-accent">
         <h2>👑 Élection du Capitaine</h2>
-        <div class="narrator-say">🗣️ « Le village doit élire son Capitaine. Sa voix comptera double et il tranchera les égalités. Faites vos campagnes, puis votez à main levée ! »</div>
+        <div class="narrator-say">« Le village doit élire son Capitaine. Sa voix comptera double et il tranchera les égalités. Faites vos campagnes, puis votez à main levée ! »</div>
         ${promptPickButtons('electCaptain')}
         <button class="btn-sm btn-ghost" data-action="skipCaptain">Jouer sans Capitaine</button>
       </div>`;
@@ -1262,18 +1794,21 @@ function renderDay() {
     content = `
       <div class="panel panel-accent">
         <h2>💬 Débat du village</h2>
-        <div class="narrator-say">🗣️ « Le débat est ouvert ! Qui accusez-vous ? »</div>
+        <div class="narrator-say">« Le débat est ouvert ! Qui accusez-vous ? »</div>
         ${capitaine ? `<p class="small">👑 Capitaine : <b>${esc(capitaine.name)}</b> (voix double). C'est lui qui distribue la parole.</p>` : ''}
         ${S.flags.corbeauTarget != null && byId(S.flags.corbeauTarget)?.alive ? `<p class="small">🐦‍⬛ Rappel : <b>${esc(byId(S.flags.corbeauTarget)?.name)}</b> part avec 2 voix contre lui/elle.</p>` : ''}
         ${S.players.some(p => p.noVote && p.alive) ? `<p class="small">🤡 Ne vote(nt) pas : ${S.players.filter(p => p.noVote && p.alive).map(p => esc(p.name)).join(', ')}</p>` : ''}
         ${timerHTML('debat', S.settings.debateSec, 'Temps de débat')}
       </div>
-      <button class="btn-primary btn-big" data-action="toVote">🗳️ Passer au vote →</button>`;
+      ${renderEventPanel()}
+      ${renderBuildingsReminder()}
+      <button class="btn-primary btn-big" data-action="toVote">🗳️ Passer au vote →</button>
+      <button class="btn-big btn-ghost" data-action="showVillageScreen">📺 Écran du village (affichage public)</button>`;
   } else if (stage === 'vote') {
     content = `
       <div class="panel panel-accent">
         <h2>🗳️ Vote du village ${S.day.voteRound > 1 ? `<span class="badge">2e vote (Juge)</span>` : ''}</h2>
-        <div class="narrator-say">🗣️ « À mon signal, désignez tous du doigt le joueur que vous accusez… 3, 2, 1, votez ! »</div>
+        <div class="narrator-say">« À mon signal, désignez tous du doigt le joueur que vous accusez… 3, 2, 1, votez ! »</div>
         ${timerHTML('vote', S.settings.voteSec, 'Temps de vote')}
         <h3 style="margin-top:12px">Résultat : qui est désigné ?</h3>
         ${promptPickButtons('voteResult')}
@@ -1282,6 +1817,7 @@ function renderDay() {
           <button data-action="voteResult" data-arg="none">🕊️ Personne</button>
         </div>
         <button class="btn-sm btn-ghost" data-action="backToDebate">← Revenir au débat</button>
+        <button class="btn-sm btn-ghost" data-action="showVillageScreen">📺 Écran du village</button>
       </div>`;
   } else if (stage === 'captainDecides') {
     content = `
@@ -1298,7 +1834,7 @@ function renderDay() {
       <div class="panel panel-accent">
         <h2>🫖 Servante Dévouée</h2>
         <p><b>${esc(dead?.name)}</b> va être éliminé(e). Avant de révéler sa carte, demandez :</p>
-        <div class="narrator-say">🗣️ « Quelqu'un souhaite-t-il se dévoiler ? »</div>
+        <div class="narrator-say">« Quelqu'un souhaite-t-il se dévoiler ? »</div>
         <p class="small muted">La Servante (${esc(servante?.name)}) peut prendre la carte de l'éliminé et jouer son rôle (sans le révéler).</p>
         <div class="grid2">
           <button class="btn-big" data-action="servanteChoice" data-arg="no">Non, révéler la carte</button>
@@ -1309,18 +1845,19 @@ function renderDay() {
     let prompt = '';
     if (q) {
       if (q.type === 'info') prompt = `<div class="panel panel-accent"><p>${q.text}</p><button class="btn-primary btn-big" data-action="promptDismiss">Compris →</button></div>`;
-      else if (q.type === 'capitaine') prompt = `<div class="panel panel-accent"><p>${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Pas de successeur</button></div>`;
-      else if (q.type === 'chasseur') prompt = `<div class="panel panel-danger"><p>${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Il ne tire pas</button></div>`;
+      else if (q.type === 'capitaine') prompt = `<div class="panel panel-accent">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Pas de successeur</button></div>`;
+      else if (q.type === 'chasseur') prompt = `<div class="panel panel-danger">${promptSay(q)}<p class="muted small">${q.text}</p>${promptPickButtons('promptPick')}<button class="btn-sm btn-ghost" data-action="promptSkip">Il ne tire pas</button></div>`;
       else if (q.type === 'chevalier') prompt = `<div class="panel panel-danger"><p>${q.text}</p><div class="pick-list">${alivePlayers().filter(isWolfSide).map(p => `<button class="pick-btn" data-action="promptPick" data-arg="${p.id}">${esc(p.name)}</button>`).join('')}</div><button class="btn-sm btn-ghost" data-action="promptSkip">Aucun loup</button></div>`;
     }
     const jugeAvailable = playerWithRole('juge') && !S.flags.jugeUsed && !S.flags.ancienPowersLost;
     content = `
       <h2>📣 Résultat du vote</h2>
+      ${announceScript('vote')}
       ${S.announce.deaths.length
         ? S.announce.deaths.map(d => {
             const p = byId(d.id); const r = roleById[p.roleId];
-            return `<div class="death-item"><span style="font-size:1.4rem">💀</span>
-              <div><b>${esc(p.name)}</b> — ${CAUSE_LABEL[d.cause]}<br><span class="muted small">Révélez sa carte : ${r.icon} ${r.name}</span></div></div>`;
+            return `<div class="death-item"><span class="dicon">💀</span>
+              <div><b>${esc(p.name)}</b> <span class="muted small">— révélez sa carte :</span> ${r.icon} <b>${r.name}</b></div></div>`;
           }).join('')
         : `<div class="no-death">Personne n'est éliminé ce tour-ci.</div>`}
       ${prompt}
@@ -1329,6 +1866,105 @@ function renderDay() {
         <button class="btn-primary btn-big" data-action="toNight">🌙 La nuit tombe (Nuit ${S.nightNumber + 1})</button>` : ''}`;
   }
   return content;
+}
+
+// ——— Rappel des bâtiments (extension Le Village) ———
+function renderBuildingsReminder() {
+  if (!S.buildingsEnabled) return '';
+  const holders = alivePlayers().filter(p => p.building && p.building !== 'fermier');
+  if (!holders.length) return '';
+  return `
+    <details class="panel small">
+      <summary>🏘️ Bâtiments en jeu</summary>
+      ${holders.map(p => {
+        const b = buildingById[p.building];
+        return `<div class="order-item"><span>${b.icon}</span><div><b>${b.name}</b> — ${esc(p.name)}<br><span class="muted">${b.short}</span></div></div>`;
+      }).join('')}
+      <p class="muted" style="margin-top:8px">Appliquez les effets selon votre livret de règles.</p>
+    </details>`;
+}
+
+// ——— Historique & statistiques ———
+function renderStats() {
+  const h = loadHistory();
+  const agg = {};
+  h.forEach(g => g.players.forEach(p => {
+    const a = agg[p.name] || (agg[p.name] = { games: 0, wolf: 0, wins: 0 });
+    a.games++; if (p.wolf) a.wolf++; if (p.won) a.wins++;
+  }));
+  const rows = Object.entries(agg).sort((a, b) => b[1].games - a[1].games);
+  const WICON = { village: '🏡', loups: '🐺', amoureux: '💘', flute: '🪈', loup_blanc: '🌕', ange: '👼', personne: '💀' };
+  return `
+    <div class="topbar">
+      <button class="btn-sm btn-ghost" data-action="statsBack">← Accueil</button>
+      <span class="badge">📊 ${h.length} partie${h.length > 1 ? 's' : ''}</span>
+    </div>
+    <h2>📊 Statistiques des joueurs</h2>
+    <div class="panel" style="padding:10px 14px">
+      <div class="stats-row stats-head"><span>Joueur</span><span>Parties</span><span>🐺 Loup</span><span>🏆 Victoires</span></div>
+      ${rows.map(([name, a]) => `
+        <div class="stats-row">
+          <span><b>${esc(name)}</b>${a.wolf === 0 ? ' <span class="muted small">(jamais loup !)</span>' : ''}</span>
+          <span>${a.games}</span><span>${a.wolf}</span><span>${a.wins}</span>
+        </div>`).join('')}
+    </div>
+    <h2 style="margin-top:16px">📜 Parties passées</h2>
+    ${h.map((g, i) => {
+      const w = WINNER_INFO[g.winner] || { icon: '🏁', title: 'Fin de partie' };
+      return `
+      <details class="panel">
+        <summary>${w.icon} ${new Date(g.date).toLocaleDateString('fr-FR')} — ${w.title} <span class="muted small">(${g.players.length} joueurs, ${g.nights} nuit${g.nights > 1 ? 's' : ''})</span></summary>
+        ${g.players.map(p => `<div class="order-item"><span>${p.won ? '🏆' : p.alive ? '🙂' : '💀'}</span><span>${esc(p.name)} — ${roleById[p.roleId]?.icon || ''} ${roleById[p.roleId]?.name || ''}</span></div>`).join('')}
+        <button class="btn-sm" style="margin-top:8px" data-action="shareHistoryRecap" data-arg="${i}">📤 Partager le récit</button>
+      </details>`;
+    }).join('')}
+    <button class="btn-big btn-ghost" data-action="clearHistory">🗑️ Effacer l'historique</button>`;
+}
+
+// ——— Écran du village (affichage public, sans spoiler) ———
+function renderVillageScreen() {
+  const alive = alivePlayers();
+  const capitaine = S.players.find(p => p.capitaine && p.alive);
+  const timerKey = S.phase === 'day' && S.day?.stage === 'vote' ? 'vote' : 'debat';
+  const t = timers[timerKey];
+  const phaseLabel = S.phase === 'night' ? `🌙 Nuit ${S.nightNumber}` : S.phase === 'morning' ? '🌅 L’aube' : `☀️ Jour ${S.dayCount}`;
+  return `
+    <div class="village-screen">
+      <div class="vs-phase">${phaseLabel}</div>
+      ${S.phase === 'day' ? `
+        <div class="vs-timer" id="timerbig-${timerKey}">${t ? fmtTime(t.remaining) : '—'}</div>
+        <div class="vs-sub">${timerKey === 'vote' ? '🗳️ Vote en cours' : '💬 Débat du village'}</div>` : `
+        <div class="vs-timer" style="font-size:5rem">🌙</div>
+        <div class="vs-sub">Le village dort…</div>`}
+      ${capitaine ? `<div class="vs-cap">👑 Capitaine : <b>${esc(capitaine.name)}</b></div>` : ''}
+      <div class="vs-players">
+        ${S.players.map(p => `<span class="vs-p ${p.alive ? '' : 'vs-dead'}">${p.capitaine && p.alive ? '👑 ' : ''}${esc(p.name)}</span>`).join('')}
+      </div>
+      <div class="vs-count">${alive.length} villageois en vie</div>
+      <button class="btn-sm btn-ghost vs-exit" data-action="hideVillageScreen">✕ narrateur</button>
+    </div>`;
+}
+
+// ——— Cartes Événements ———
+function renderEventPanel() {
+  if (!S.eventsEnabled) return '';
+  const ev = S.flags.currentEvent ? eventById[S.flags.currentEvent] : null;
+  return `
+    <div class="panel ${ev ? 'panel-accent' : ''}">
+      ${ev ? `
+        <div class="row-between">
+          <h3 style="margin:0">🎴 Événement du jour</h3>
+          <button class="btn-sm btn-ghost" data-action="dismissEvent">✕</button>
+        </div>
+        <div class="event-card">
+          <span style="font-size:2rem">${ev.icon}</span>
+          <div><b>${ev.name}</b><br><span class="muted small">${ev.text}</span></div>
+        </div>` : `
+        <div class="row-between">
+          <span class="small muted">🎴 Cartes Événements activées — pimentez ce matin ?</span>
+          <button class="btn-sm" data-action="drawEvent">Tirer une carte</button>
+        </div>`}
+    </div>`;
 }
 
 // ——— Tableau des joueurs ———
@@ -1357,7 +1993,7 @@ function renderBoard() {
         <span class="picon">${r.icon}</span>
         <div class="pinfo">
           <div class="pname">${esc(p.name)} <span class="status-icons">${st}</span></div>
-          <div class="prole">${r.name} · <span class="camp-tag camp-${camp}">${CAMP_LABEL[camp] || camp}</span></div>
+          <div class="prole">${r.name}${p.building ? ` · ${buildingById[p.building]?.icon} ${buildingById[p.building]?.name}` : ''} · <span class="camp-tag camp-${camp}">${CAMP_LABEL[camp] || camp}</span></div>
         </div>
         ${p.alive
           ? `<button class="btn-sm btn-ghost" data-action="adminToggleCaptain" data-arg="${p.id}">👑</button>
@@ -1425,12 +2061,22 @@ function renderHelp() {
     <details class="panel">
       <summary>🎴 Tous les personnages</summary>
       ${ROLES.map(r => `
-        <div class="role-card">
+        <div class="role-card is-${r.camp}">
           <span class="icon">${r.icon}</span>
           <div class="info">
             <div class="rname">${r.name} <span class="camp-tag camp-${r.camp}">${CAMP_LABEL[r.camp]}</span> <span class="muted small">· ${r.ext}</span></div>
             <div class="rshort">${r.desc}</div>
           </div>
+        </div>`).join('')}
+    </details>
+    <details class="panel">
+      <summary>🏘️ Extension « Le Village » (bâtiments)</summary>
+      <p class="muted small">9 bâtiments posés face visible devant les joueurs, en plus de leur carte secrète : chacun exerce un métier au vu de tous. L'app suit qui possède quoi — appliquez les effets précis selon votre livret de règles.</p>
+      ${BUILDINGS.map(b => `
+        <div class="order-item">
+          <span style="font-size:1.3rem">${b.icon}</span>
+          <div><b>${b.name}</b> <span class="muted small">· jeton : ${b.token}${b.multi ? ' (plusieurs)' : ''}</span><br>
+          <span class="muted small">${b.short}</span></div>
         </div>`).join('')}
     </details>
     <details class="panel">
@@ -1455,6 +2101,10 @@ function renderSettings() {
         <input type="number" id="set-debate" min="1" max="30" value="${Math.round(S.settings.debateSec / 60)}">
         <p class="small" style="margin-top:10px">🗳️ Durée du vote (secondes)</p>
         <input type="number" id="set-vote" min="10" max="600" step="10" value="${S.settings.voteSec}">
+        <div class="row-between" style="margin-top:14px">
+          <span>🔊 Ambiances sonores<br><span class="muted small">Hurlement la nuit, aube, cloche du vote</span></span>
+          <button class="btn-sm ${soundOn() ? 'btn-ok' : ''}" data-action="toggleSound">${soundOn() ? '🔊 Activées' : '🔇 Coupées'}</button>
+        </div>
         <button class="btn-primary btn-big" data-action="closeSettings">Enregistrer</button>
       </div>
     </div>`;
@@ -1465,6 +2115,10 @@ document.addEventListener('change', e => {
   if (e.target.classList?.contains('deal-select')) {
     const p = byId(+e.target.dataset.pid);
     if (p) { p.roleId = e.target.value; save(); }
+  }
+  if (e.target.classList?.contains('building-select')) {
+    const p = byId(+e.target.dataset.pid);
+    if (p) { p.building = e.target.value; save(); }
   }
 });
 
